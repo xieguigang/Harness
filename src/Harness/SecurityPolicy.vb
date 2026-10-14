@@ -29,6 +29,19 @@ Public Class PermissionEventArg : Inherits EventArgs
     Public Property Target As String
 
     ''' <summary>
+    ''' Set when the request comes from a one-shot escalation instead of the
+    ''' active policy, e.g. "workspace-write" or "danger-full-access".
+    ''' Nothing for a plain policy driven request.
+    ''' </summary>
+    Public Property RequestedPermission As String
+
+    ''' <summary>
+    ''' The model supplied sentence explaining why the wider access is
+    ''' needed. Only set together with <see cref="RequestedPermission"/>.
+    ''' </summary>
+    Public Property Justification As String
+
+    ''' <summary>
     ''' Set to True by the event handler to let the operation proceed.
     ''' </summary>
     Public Property PermissionGranted As Boolean = False
