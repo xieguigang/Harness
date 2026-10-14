@@ -93,10 +93,10 @@ Namespace Tools
         End Function
 
         ''' <summary>
-        ''' Walk the tree breadth first, appending the marker line of every
-        ''' directory before the lines of its children so that the report
-        ''' reads as a tree. Directories come before files at each level, and
-        ''' each group is sorted ordinally so the output is deterministic.
+        ''' Walk the tree depth first, appending the marker line of every
+        ''' directory before the lines of its content so that the report reads
+        ''' as a tree. Directories come before files at each level, and each
+        ''' group is sorted ordinally so the output is deterministic.
         ''' </summary>
         Private Shared Sub Collect(dir As String, maxLevel As Integer, level As Integer, entries As List(Of String), ByRef exhausted As Boolean)
             If level > maxLevel OrElse entries.Count >= ScanLimit Then
@@ -126,22 +126,20 @@ Namespace Tools
 
             For Each subDir As String In subDirs
                 entries.Add($"[DIR]  {indent}{IO.Path.GetFileName(subDir)}/")
-            Next
 
-            For Each item As String In files
-                entries.Add($"[FILE] {indent}{IO.Path.GetFileName(item)}")
-            Next
-
-            If level < maxLevel Then
-                For Each subDir As String In subDirs
+                If level < maxLevel Then
                     Call Collect(subDir, maxLevel, level + 1, entries, exhausted)
 
                     If entries.Count >= ScanLimit Then
                         exhausted = True
                         Return
                     End If
-                Next
-            End If
+                End If
+            Next
+
+            For Each item As String In files
+                entries.Add($"[FILE] {indent}{IO.Path.GetFileName(item)}")
+            Next
         End Sub
 
         ''' <summary>

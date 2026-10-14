@@ -153,22 +153,32 @@ Module CLRFunction
             ' 20260723 mis-matched parameter name maybe generated via LLMs tools function call
             ' set parameter value directly by offset in un-strict mode
             ' andalso if the target function only required one parameter
+            '
+            ' 20261014 the offset fallback only applies while the declared name of the
+            ' first parameter is missing from the call: filling every parameter by name
+            ' afterwards keeps the optional arguments of a call (an "offset" or a
+            ' "recursive" flag) from being dropped on the floor.
             If (Not args.strict) AndAlso singleRequired Then
-                argVals(Scan0) = TryCastValue(args(0), handle.GetParameters.First)
-            Else
-                For i As Integer = 0 To argVals.Length - 1
-                    Dim name As String = pars(i).Name
-                    Dim val As Object = pars(i).DefaultValue
+                Dim head As ParameterInfo = pars.First
 
-                    If args.has(name) Then
-                        val = TryCastValue(args(name), pars(i))
-                    ElseIf Not pars(i).IsOptional Then
+                If Not args.has(head.Name) AndAlso Not args.arguments.IsNullOrEmpty Then
+                    argVals(Scan0) = TryCastValue(args(0), head)
+                End If
+            End If
+
+            For i As Integer = 0 To argVals.Length - 1
+                Dim name As String = pars(i).Name
+
+                If args.has(name) Then
+                    argVals(i) = TryCastValue(args(name), pars(i))
+                ElseIf argVals(i) Is Nothing Then
+                    If Not pars(i).IsOptional Then
                         Return $"error: call of the function '{args.name}' missing of the required parameter '{name}'!".GetJson
                     End If
 
-                    argVals(i) = val
-                Next
-            End If
+                    argVals(i) = pars(i).DefaultValue
+                End If
+            Next
 
             Dim result As Object = handle.Invoke(obj, argVals)
             Dim str As String = any.ToString(result)

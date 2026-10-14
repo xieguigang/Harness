@@ -139,12 +139,17 @@ Namespace Tools
             End If
 
             Dim listed As Integer = If(mode = ModeContent, matches, files)
-            Dim report As String = RenderReport(hits, mode, MaxMatches, matches)
+
+            ' The "--" chunk separator is only meaningful when context lines
+            ' are reported: without them every line of the report is a match
+            ' and the chunks are the plain historical match list.
+            Dim chunked As Boolean = lead > 0 OrElse trail > 0
+            Dim report As String = RenderReport(hits, mode, MaxMatches, matches, chunked)
 
             If listed > MaxMatches Then
                 Dim noun As String = If(mode = ModeContent, "matches", "files")
 
-                report &= vbCrLf & BuildOverflowNote(listed, noun, RenderReport(hits, mode, Integer.MaxValue, matches)) & vbCrLf
+                report &= vbCrLf & BuildOverflowNote(listed, noun, RenderReport(hits, mode, Integer.MaxValue, matches, chunked)) & vbCrLf
             End If
 
             Return report
@@ -315,14 +320,15 @@ Namespace Tools
         ''' Render the report for the requested shape, honouring the match (or
         ''' file) limit.
         ''' </summary>
-        Private Shared Function RenderReport(hits As List(Of GrepHit), mode As String, limit As Integer, matches As Integer) As String
+        ''' <param name="chunked">True when context lines are reported, so that the chunks of one file are separated by "--".</param>
+        Private Shared Function RenderReport(hits As List(Of GrepHit), mode As String, limit As Integer, matches As Integer, chunked As Boolean) As String
             Select Case mode
                 Case ModeFiles
                     Return RenderFiles(hits, limit)
                 Case ModeCount
                     Return RenderCounts(hits, limit)
                 Case Else
-                    Return $"Found {matches} matches" & vbCrLf & RenderContent(hits, limit)
+                    Return $"Found {matches} matches" & vbCrLf & RenderContent(hits, limit, chunked)
             End Select
         End Function
 
@@ -332,7 +338,7 @@ Namespace Tools
         ''' them and a "--" separator between the chunks of one file. At most
         ''' <paramref name="limit"/> matches are written out.
         ''' </summary>
-        Private Shared Function RenderContent(hits As List(Of GrepHit), limit As Integer) As String
+        Private Shared Function RenderContent(hits As List(Of GrepHit), limit As Integer, chunked As Boolean) As String
             Dim sb As New StringBuilder()
             Dim shown As Integer = 0
             Dim current As String = Nothing
@@ -345,7 +351,7 @@ Namespace Tools
                     sb.AppendLine()
                     sb.AppendLine(hit.File)
                     current = hit.File
-                ElseIf hit.NewChunk Then
+                ElseIf chunked AndAlso hit.NewChunk Then
                     sb.AppendLine("--")
                 End If
 
