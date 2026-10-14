@@ -20,6 +20,10 @@
     <Project Path="../../GCModeller/src/runtime/sciBASIC#/mime/text%yaml/text.yaml.vbproj">
       <Platform Solution="*|x64" Project="x64" />
     </Project>
+    <Project Path="../../GCModeller/src/runtime/sciBASIC#/vs_solutions/JavaScript/LiteJs.vbproj">
+      <BuildType Solution="Rsharp_app_release|*" Project="nuget_release" />
+      <Platform Solution="*|x64" Project="x64" />
+    </Project>
   </Folder>
   <Folder Name="/Harness/">
     <Project Path="Harness/Harness.vbproj" Id="0b86dc2b-13d8-43e3-b581-b4e251440d30">
