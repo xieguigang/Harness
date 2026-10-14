@@ -14,4 +14,8 @@
     <ProjectReference Include="..\Ollama\Ollama.vbproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Folder Include="Tools\" />
+  </ItemGroup>
+
 </Project>
