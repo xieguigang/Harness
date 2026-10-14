@@ -42,15 +42,6 @@ Namespace Tools
         End Function
 
         ''' <summary>
-        ''' Write a text file back, keeping a byte order mark only when the
-        ''' file that is being replaced carried one. A brand new file is
-        ''' written without a mark.
-        ''' </summary>
-        Friend Sub WriteAllText(target As String, text As String)
-            Call WriteAllText(target, text, File.Exists(target) AndAlso HasUtf8Bom(target))
-        End Sub
-
-        ''' <summary>
         ''' Write a text file back with an explicit byte order mark decision,
         ''' for the callers that already inspected the original file.
         ''' </summary>

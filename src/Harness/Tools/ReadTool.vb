@@ -32,18 +32,46 @@ Namespace Tools
         ''' <param name="file_path">Path to read, resolved by the filesystem backend.</param>
         ''' <param name="offset">1-based first line to return. Defaults to 1.</param>
         ''' <param name="limit">Maximum number of lines to return. Defaults to 2000.</param>
+        ''' <param name="sandbox_permissions">
+        ''' The narrowest wider sandbox mode for a one-shot retry of the exact
+        ''' operation the sandbox just denied; the retry asks the user for
+        ''' approval. Either "workspace-write" (target inside the workspace) or
+        ''' "danger-full-access" (target outside it). Leave empty unless the
+        ''' sandbox denied the operation.
+        ''' </param>
+        ''' <param name="justification">
+        ''' Required with sandbox_permissions: one sentence for the user
+        ''' explaining why this exact read needs the wider access. Use the
+        ''' language of the user current request.
+        ''' </param>
         <Description("Read a UTF-8 text file and return line-numbered content.")>
         <ExportAPI("read")>
         Public Function read(
             <Argument("file_path", Description:="Path to read, resolved by the filesystem backend.")> file_path As String,
             <Argument("offset", Description:="1-based first line to return. Defaults to 1.")> Optional offset As Double = 1,
-            <Argument("limit", Description:="Maximum number of lines to return. Defaults to 2000.")> Optional limit As Double = 2000
+            <Argument("limit", Description:="Maximum number of lines to return. Defaults to 2000.")> Optional limit As Double = 2000,
+            <Argument("sandbox_permissions", Description:="The narrowest wider sandbox mode for a one-shot retry of the exact operation the sandbox just denied; the retry asks the user for approval. One of ""workspace-write"" (target inside the workspace) or ""danger-full-access"" (target outside it). Leave empty unless the sandbox denied the operation.")> Optional sandbox_permissions As String = Nothing,
+            <Argument("justification", Description:="Required with sandbox_permissions: one sentence for the user explaining why this exact read needs the wider access. Use the language of the user's current request.")> Optional justification As String = Nothing
         ) As String
             Dim fullPath As String = Nothing
             Dim denied As String = _sandbox.ResolveAndAuthorize(file_path, SandboxOperation.Read, fullPath)
 
             If denied IsNot Nothing Then
-                Return denied
+                ' No escalation asked for (or no path to escalate: an
+                ' unresolvable path leaves fullPath empty): report the denial
+                ' as it is.
+                If String.IsNullOrWhiteSpace(sandbox_permissions) OrElse fullPath Is Nothing Then
+                    Return denied
+                End If
+
+                ' One-shot retry: ask the user for the narrowest mode that
+                ' would cover this exact operation. The policy itself is not
+                ' changed.
+                Dim escalated As String = _sandbox.AuthorizeEscalation(SandboxOperation.Read, fullPath, sandbox_permissions, justification)
+
+                If escalated IsNot Nothing Then
+                    Return escalated
+                End If
             End If
 
             If Not File.Exists(fullPath) Then

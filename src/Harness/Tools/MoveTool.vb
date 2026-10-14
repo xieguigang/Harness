@@ -125,7 +125,7 @@ Namespace Tools
 
                 Return Nothing
             Catch ex As Exception
-                Return $"Error moving '{source}' to '{destination}': {ex.Message}"
+                Return $"Error: cannot move '{source}' to '{destination}': {ex.Message}"
             End Try
         End Function
 
@@ -138,7 +138,7 @@ Namespace Tools
                 Call CopyTree(source, destination)
                 Call Directory.Delete(source, recursive:=True)
             Catch ex As Exception
-                Return $"Error moving '{source}' to '{destination}': {cause.Message} The copy fallback also failed: {ex.Message}"
+                Return $"Error: cannot move '{source}' to '{destination}': {cause.Message} The copy fallback also failed: {ex.Message}"
             End Try
 
             Return Nothing

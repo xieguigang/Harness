@@ -16,6 +16,11 @@ Namespace Tools
     ''' so the listed directory is resolved and authorized like any other
     ''' path. Hidden entries are listed: a ".git" or ".codebuddy" folder is
     ''' something the agent should be able to see.
+    ''' 
+    ''' When the sandbox denies the read, the model may issue one retry that
+    ''' carries a <c>sandbox_permissions</c> mode and a justification. That
+    ''' retry does not change the policy: it raises the sandbox permission
+    ''' event and, if the user approves, performs this single operation.
     ''' </summary>
     Public Class LsTool
 
@@ -48,17 +53,45 @@ Namespace Tools
         ''' </summary>
         ''' <param name="path">Directory to list. Defaults to the session workspace; a relative path resolves against it.</param>
         ''' <param name="depth">How many directory levels to descend, 1 meaning only the direct children. Defaults to 1, capped at 4.</param>
+        ''' <param name="sandbox_permissions">
+        ''' The narrowest wider sandbox mode for a one-shot retry of the exact
+        ''' operation the sandbox just denied; the retry asks the user for
+        ''' approval. Either "workspace-write" (target inside the workspace) or
+        ''' "danger-full-access" (target outside it). Leave empty unless the
+        ''' sandbox denied the operation.
+        ''' </param>
+        ''' <param name="justification">
+        ''' Required with sandbox_permissions: one sentence for the user
+        ''' explaining why this exact listing needs the wider access. Use the
+        ''' language of the user current request.
+        ''' </param>
         <Description("List the children of a directory: sub directories and files, one entry per line, hidden entries included. Sub directories are marked [DIR] and files [FILE]. Set depth above 1 to walk several levels; the tree is then shown indented below its parent.")>
         <ExportAPI("ls")>
         Public Function ls(
             <Argument("path", Description:="Directory to list. Defaults to the session workspace; a relative path resolves against it.")> Optional path As String = Nothing,
-            <Argument("depth", Description:="How many directory levels to descend, 1 meaning only the direct children. Defaults to 1, capped at 4.")> Optional depth As Double = 1
+            <Argument("depth", Description:="How many directory levels to descend, 1 meaning only the direct children. Defaults to 1, capped at 4.")> Optional depth As Double = 1,
+            <Argument("sandbox_permissions", Description:="The narrowest wider sandbox mode for a one-shot retry of the exact operation the sandbox just denied; the retry asks the user for approval. One of ""workspace-write"" (target inside the workspace) or ""danger-full-access"" (target outside it). Leave empty unless the sandbox denied the operation.")> Optional sandbox_permissions As String = Nothing,
+            <Argument("justification", Description:="Required with sandbox_permissions: one sentence for the user explaining why this exact listing needs the wider access. Use the language of the user's current request.")> Optional justification As String = Nothing
         ) As String
             Dim fullPath As String = Nothing
             Dim denied As String = _sandbox.ResolveAndAuthorize(path, SandboxOperation.Read, fullPath)
 
             If denied IsNot Nothing Then
-                Return denied
+                ' No escalation asked for (or no path to escalate: an
+                ' unresolvable path leaves fullPath empty): report the denial
+                ' as it is.
+                If String.IsNullOrWhiteSpace(sandbox_permissions) OrElse fullPath Is Nothing Then
+                    Return denied
+                End If
+
+                ' One-shot retry: ask the user for the narrowest mode that
+                ' would cover this exact operation. The policy itself is not
+                ' changed.
+                Dim escalated As String = _sandbox.AuthorizeEscalation(SandboxOperation.Read, fullPath, sandbox_permissions, justification)
+
+                If escalated IsNot Nothing Then
+                    Return escalated
+                End If
             End If
 
             If File.Exists(fullPath) Then

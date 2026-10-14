@@ -19,6 +19,11 @@ Namespace Tools
     ''' numbers (optionally with a few lines of context around each match),
     ''' just the paths of the files that matched, and the per file match
     ''' counts.
+    ''' 
+    ''' When the sandbox denies the read, the model may issue one retry that
+    ''' carries a <c>sandbox_permissions</c> mode and a justification. That
+    ''' retry does not change the policy: it raises the sandbox permission
+    ''' event and, if the user approves, performs this single operation.
     ''' </summary>
     Public Class GrepTool
 
@@ -69,7 +74,19 @@ Namespace Tools
         ''' <param name="after">Lines of context after every match; the effective value is max(context, after). Defaults to 0.</param>
         ''' <param name="output_mode">"content" (default), "files_with_matches" or "count".</param>
         ''' <param name="ignore_case">Match case insensitively. Defaults to false.</param>
-        <Description("Search file contents with a ripgrep regular expression. By default returns the matching lines with line numbers, grouped by file, and with the surrounding context lines when context/before/after are given (context lines are marked ""Line n- ""). output_mode=""files_with_matches"" returns the paths of the matched files only, output_mode=""count"" returns one ""path: count"" line per file. Returns up to 250 matches (or 250 files for the two list modes); a larger result reports where the complete match list was saved.")>
+        ''' <param name="sandbox_permissions">
+        ''' The narrowest wider sandbox mode for a one-shot retry of the exact
+        ''' operation the sandbox just denied; the retry asks the user for
+        ''' approval. Either "workspace-write" (target inside the workspace) or
+        ''' "danger-full-access" (target outside it). Leave empty unless the
+        ''' sandbox denied the operation.
+        ''' </param>
+        ''' <param name="justification">
+        ''' Required with sandbox_permissions: one sentence for the user
+        ''' explaining why this exact search needs the wider access. Use the
+        ''' language of the user current request.
+        ''' </param>
+        <Description("Search file contents with a ripgrep regular expression. By default returns the matching lines with line numbers, grouped by file, and with the surrounding context lines when context/before/after are given (context lines are marked ""Line n- ""). output_mode=""files_with_matches"" returns the paths of the matched files only, output_mode=""count"" returns one ""path: count"" line per file. Returns up to 250 matches (or 250 files for the two list modes); a larger result reports where the match list was saved.")>
         <ExportAPI("grep")>
         Public Function grep(
             <Argument("pattern", Description:="Regular expression to search for (ripgrep syntax).")> pattern As String,
@@ -79,7 +96,9 @@ Namespace Tools
             <Argument("before", Description:="Lines of context before every match. Defaults to 0; the effective value is max(context, before).")> Optional before As Double = 0,
             <Argument("after", Description:="Lines of context after every match. Defaults to 0; the effective value is max(context, after).")> Optional after As Double = 0,
             <Argument("output_mode", Description:="What to report: ""content"" (default) returns the matching lines, ""files_with_matches"" returns only the paths of the matching files, ""count"" returns one ""path: count"" line per matching file.")> Optional output_mode As String = Nothing,
-            <Argument("ignore_case", Description:="Match case insensitively. Defaults to false.")> Optional ignore_case As Boolean = False
+            <Argument("ignore_case", Description:="Match case insensitively. Defaults to false.")> Optional ignore_case As Boolean = False,
+            <Argument("sandbox_permissions", Description:="The narrowest wider sandbox mode for a one-shot retry of the exact operation the sandbox just denied; the retry asks the user for approval. One of ""workspace-write"" (target inside the workspace) or ""danger-full-access"" (target outside it). Leave empty unless the sandbox denied the operation.")> Optional sandbox_permissions As String = Nothing,
+            <Argument("justification", Description:="Required with sandbox_permissions: one sentence for the user explaining why this exact search needs the wider access. Use the language of the user's current request.")> Optional justification As String = Nothing
         ) As String
             If String.IsNullOrWhiteSpace(pattern) Then
                 Return "Error: pattern is empty."
@@ -112,7 +131,21 @@ Namespace Tools
             Dim denied As String = _sandbox.ResolveAndAuthorize(path, SandboxOperation.Read, root)
 
             If denied IsNot Nothing Then
-                Return denied
+                ' No escalation asked for (or no path to escalate: an
+                ' unresolvable path leaves root empty): report the denial as
+                ' it is.
+                If String.IsNullOrWhiteSpace(sandbox_permissions) OrElse root Is Nothing Then
+                    Return denied
+                End If
+
+                ' One-shot retry: ask the user for the narrowest mode that
+                ' would cover this exact operation. The policy itself is not
+                ' changed.
+                Dim escalated As String = _sandbox.AuthorizeEscalation(SandboxOperation.Read, root, sandbox_permissions, justification)
+
+                If escalated IsNot Nothing Then
+                    Return escalated
+                End If
             End If
 
             If Not File.Exists(root) AndAlso Not Directory.Exists(root) Then
@@ -124,17 +157,14 @@ Namespace Tools
             Dim hits As New List(Of GrepHit)()
             Dim files As Integer = 0
             Dim matches As Integer = 0
+            Dim capped As Boolean = False
 
             For Each candidate As String In CollectSearchFiles(root, include)
-                Call CollectMatches(candidate, regex, hits, lead, trail, files, matches)
+                Call CollectMatches(candidate, regex, hits, lead, trail, files, matches, capped)
             Next
 
             If files = 0 Then
-                If mode = ModeContent Then
-                    ' keep the historical report of an empty result
-                    Return $"Found 0 matches" & vbCrLf
-                End If
-
+                ' One wording for an empty result, whatever the report shape.
                 Return "No matches found."
             End If
 
@@ -149,7 +179,7 @@ Namespace Tools
             If listed > MaxMatches Then
                 Dim noun As String = If(mode = ModeContent, "matches", "files")
 
-                report &= vbCrLf & BuildOverflowNote(listed, noun, RenderReport(hits, mode, Integer.MaxValue, matches, chunked)) & vbCrLf
+                report &= vbCrLf & BuildOverflowNote(listed, noun, RenderReport(hits, mode, Integer.MaxValue, matches, chunked), capped) & vbCrLf
             End If
 
             Return report
@@ -223,13 +253,15 @@ Namespace Tools
         ''' </summary>
         ''' <param name="fileCount">Receives 1 when the file holds at least one match.</param>
         ''' <param name="matchCount">Receives the number of matching lines of the file.</param>
+        ''' <param name="capped">Set to True when the in memory list reached <see cref="MaxHitLines"/>, so that the reportable lines are no longer all of them.</param>
         Private Sub CollectMatches(candidate As String,
                                    regex As Regex,
                                    hits As List(Of GrepHit),
                                    before As Integer,
                                    after As Integer,
                                    ByRef fileCount As Integer,
-                                   ByRef matchCount As Integer)
+                                   ByRef matchCount As Integer,
+                                   ByRef capped As Boolean)
             Dim lines() As String
 
             Try
@@ -260,6 +292,7 @@ Namespace Tools
             matchCount += matched.Count
 
             If hits.Count >= MaxHitLines Then
+                capped = True
                 Return
             End If
 
@@ -294,6 +327,7 @@ Namespace Tools
 
                 For n As Integer = region(0) To region(1)
                     If hits.Count >= MaxHitLines Then
+                        capped = True
                         Return
                     End If
 
@@ -421,29 +455,37 @@ Namespace Tools
         End Function
 
         ''' <summary>
-        ''' Save the complete report inside the workspace and report where it
-        ''' went. The dump is a write operation, so it is gated by the active
-        ''' security policy just like any other write.
+        ''' Save the report inside the workspace and report where it went. The
+        ''' dump is a write operation, so it is gated by the active security
+        ''' policy just like any other write.
         ''' </summary>
         ''' <param name="listed">Total number of matches (or files) that were found.</param>
         ''' <param name="noun">"matches" or "files", for the report text.</param>
-        ''' <param name="full">The complete, untruncated report to save.</param>
-        Private Function BuildOverflowNote(listed As Integer, noun As String, full As String) As String
+        ''' <param name="full">The report to save.</param>
+        ''' <param name="capped">True when the in memory report stopped at <see cref="MaxHitLines"/>, so that the saved list holds fewer entries than <paramref name="listed"/>.</param>
+        Private Function BuildOverflowNote(listed As Integer, noun As String, full As String, capped As Boolean) As String
             Dim target As String = _sandbox.ArtifactPath("grep", $"grep-{DateTime.Now.ToString("yyyyMMdd-HHmmss")}.txt")
             Dim denied As String = _sandbox.Authorize(SandboxOperation.Write, target, insideWorkspace:=True)
 
+            ' The scan stops growing the in memory list at MaxHitLines, so the
+            ' dump is only the complete list while that limit was not reached.
+            ' The total counts stay exact either way.
+            Dim subject As String = If(capped,
+                $"The match list (truncated after {MaxHitLines} report lines)",
+                "The complete match list")
+
             If denied IsNot Nothing Then
-                Return $"(Showing the first {MaxMatches} of {listed} {noun}. The complete match list could not be saved under the current security policy.)"
+                Return $"(Showing the first {MaxMatches} of {listed} {noun}. {subject} could not be saved under the current security policy.)"
             End If
 
             Try
                 Call Directory.CreateDirectory(IO.Path.GetDirectoryName(target))
                 Call File.WriteAllText(target, full, Encoding.UTF8)
             Catch ex As Exception
-                Return $"(Showing the first {MaxMatches} of {listed} {noun}. The complete match list could not be saved: {ex.Message})"
+                Return $"(Showing the first {MaxMatches} of {listed} {noun}. {subject} could not be saved: {ex.Message})"
             End Try
 
-            Return $"(Showing the first {MaxMatches} of {listed} {noun}. Complete match list saved to: {_sandbox.WorkspaceRelative(target)})"
+            Return $"(Showing the first {MaxMatches} of {listed} {noun}. {subject} saved to: {_sandbox.WorkspaceRelative(target)})"
         End Function
 
         ''' <summary>

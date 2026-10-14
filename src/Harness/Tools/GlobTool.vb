@@ -14,6 +14,11 @@ Namespace Tools
     ''' so path resolution and permission checks always use the workspace and
     ''' the security policy of that sandbox. Reported paths are workspace
     ''' relative, like the other tools.
+    ''' 
+    ''' When the sandbox denies the read, the model may issue one retry that
+    ''' carries a <c>sandbox_permissions</c> mode and a justification. That
+    ''' retry does not change the policy: it raises the sandbox permission
+    ''' event and, if the user approves, performs this single operation.
     ''' </summary>
     Public Class GlobTool
 
@@ -36,11 +41,25 @@ Namespace Tools
         ''' </summary>
         ''' <param name="pattern">Glob pattern to match file paths against (e.g. "**/*.ts", "src/**/*.test.js"). A pattern with no "/" matches the basename at any depth, so "*" and "*.ts" both search the whole tree; include a separator to anchor the depth.</param>
         ''' <param name="path">Directory to search in. Defaults to the session workspace; a relative path resolves against it.</param>
+        ''' <param name="sandbox_permissions">
+        ''' The narrowest wider sandbox mode for a one-shot retry of the exact
+        ''' operation the sandbox just denied; the retry asks the user for
+        ''' approval. Either "workspace-write" (target inside the workspace) or
+        ''' "danger-full-access" (target outside it). Leave empty unless the
+        ''' sandbox denied the operation.
+        ''' </param>
+        ''' <param name="justification">
+        ''' Required with sandbox_permissions: one sentence for the user
+        ''' explaining why this exact search needs the wider access. Use the
+        ''' language of the user current request.
+        ''' </param>
         <Description("Find files, not directories, whose paths match a glob pattern, including hidden and ignored files. Returns up to 100 paths in modification-time order; a larger result keeps the first paths and reports where the complete list was saved.")>
         <ExportAPI("glob")>
         Public Function glob(
             <Argument("pattern", Description:="Glob pattern to match file paths against (e.g. ""**/*.ts"", ""src/**/*.test.js""). A pattern with no ""/"" matches the basename at any depth, so ""*"" and ""*.ts"" both search the whole tree; include a separator to anchor the depth.")> pattern As String,
-            <Argument("path", Description:="Directory to search in. Defaults to the session workspace; a relative path resolves against it.")> Optional path As String = Nothing
+            <Argument("path", Description:="Directory to search in. Defaults to the session workspace; a relative path resolves against it.")> Optional path As String = Nothing,
+            <Argument("sandbox_permissions", Description:="The narrowest wider sandbox mode for a one-shot retry of the exact operation the sandbox just denied; the retry asks the user for approval. One of ""workspace-write"" (target inside the workspace) or ""danger-full-access"" (target outside it). Leave empty unless the sandbox denied the operation.")> Optional sandbox_permissions As String = Nothing,
+            <Argument("justification", Description:="Required with sandbox_permissions: one sentence for the user explaining why this exact search needs the wider access. Use the language of the user's current request.")> Optional justification As String = Nothing
         ) As String
             If String.IsNullOrWhiteSpace(pattern) Then
                 Return "Error: pattern is empty."
@@ -56,7 +75,21 @@ Namespace Tools
             Dim denied As String = _sandbox.ResolveAndAuthorize(path, SandboxOperation.Read, root)
 
             If denied IsNot Nothing Then
-                Return denied
+                ' No escalation asked for (or no path to escalate: an
+                ' unresolvable path leaves root empty): report the denial as
+                ' it is.
+                If String.IsNullOrWhiteSpace(sandbox_permissions) OrElse root Is Nothing Then
+                    Return denied
+                End If
+
+                ' One-shot retry: ask the user for the narrowest mode that
+                ' would cover this exact operation. The policy itself is not
+                ' changed.
+                Dim escalated As String = _sandbox.AuthorizeEscalation(SandboxOperation.Read, root, sandbox_permissions, justification)
+
+                If escalated IsNot Nothing Then
+                    Return escalated
+                End If
             End If
 
             If Not File.Exists(root) AndAlso Not Directory.Exists(root) Then

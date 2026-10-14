@@ -59,8 +59,10 @@ Namespace Tools
             Dim denied As String = _sandbox.ResolveAndAuthorize(file_path, SandboxOperation.Write, fullPath)
 
             If denied IsNot Nothing Then
-                ' No escalation asked for: report the denial as it is.
-                If String.IsNullOrWhiteSpace(sandbox_permissions) Then
+                ' No escalation asked for (or no path to escalate: an
+                ' unresolvable path leaves fullPath empty): report the denial
+                ' as it is.
+                If String.IsNullOrWhiteSpace(sandbox_permissions) OrElse fullPath Is Nothing Then
                     Return denied
                 End If
 

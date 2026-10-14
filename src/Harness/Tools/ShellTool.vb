@@ -67,7 +67,10 @@ Namespace Tools
             Dim denied As String = _sandbox.ResolveAndAuthorize(workdir, SandboxOperation.Execute, cwd)
 
             If denied IsNot Nothing Then
-                If String.IsNullOrWhiteSpace(sandbox_permissions) Then
+                ' No escalation asked for (or no path to escalate: an
+                ' unresolvable workdir leaves cwd empty): report the denial
+                ' as it is.
+                If String.IsNullOrWhiteSpace(sandbox_permissions) OrElse cwd Is Nothing Then
                     Return denied
                 End If
 

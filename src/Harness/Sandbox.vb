@@ -1,4 +1,5 @@
 Imports System.IO
+Imports System.Runtime.ExceptionServices
 Imports Ollama
 
 ''' <summary>
@@ -169,8 +170,10 @@ Public Class Sandbox
                 Call factory.MakeGenericMethod(entry.Tool).Invoke(Me, New Object() {client, entry.Name})
             Catch ex As Reflection.TargetInvocationException
                 ' a broken tool definition must not be reported as a
-                ' reflection failure
-                Throw ex.InnerException
+                ' reflection failure. Rethrowing through
+                ' ExceptionDispatchInfo keeps the stack trace of the inner
+                ' exception instead of restarting it at this line.
+                Call ExceptionDispatchInfo.Capture(ex.InnerException).Throw()
             End Try
         Next
 
