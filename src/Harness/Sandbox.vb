@@ -60,6 +60,15 @@ Public Class Sandbox
     ReadOnly wsSecurity As SecurityPolicy
 
     ''' <summary>
+    ''' The background job registry of this session. It is created on first
+    ''' use and lives as long as the sandbox does, so the jobs started
+    ''' through it - and their output - belong to this session exactly like
+    ''' the files the other tools touch.
+    ''' </summary>
+    Private ReadOnly wsJobs As New Lazy(Of Tools.BackgroundJobManager)(
+        Function() New Tools.BackgroundJobManager(wsRoot))
+
+    ''' <summary>
     ''' Raised when a write or execute operation needs the user's consent.
     ''' Set <see cref="PermissionEventArg.PermissionGranted"/> to True inside
     ''' the handler to let the operation proceed.
@@ -102,6 +111,17 @@ Public Class Sandbox
         End Get
     End Property
 
+    ''' <summary>
+    ''' The background jobs of this session: what job_start starts, and what
+    ''' job_list, job_output and job_kill work on. The registry is created on
+    ''' first use and is shared by the sandbox and its tools.
+    ''' </summary>
+    Public ReadOnly Property Jobs As Tools.BackgroundJobManager
+        Get
+            Return wsJobs.Value
+        End Get
+    End Property
+
     ' ========================================================================
     ' Tool registration
     ' ========================================================================
@@ -123,7 +143,11 @@ Public Class Sandbox
         ("ls", GetType(Tools.LsTool)),
         ("delete", GetType(Tools.DeleteTool)),
         ("move", GetType(Tools.MoveTool)),
-        ("shell", GetType(Tools.ShellTool))
+        ("shell", GetType(Tools.ShellTool)),
+        ("job_start", GetType(Tools.JobStartTool)),
+        ("job_kill", GetType(Tools.JobKillTool)),
+        ("job_list", GetType(Tools.JobListTool)),
+        ("job_output", GetType(Tools.JobOutputTool))
     }
 
     ''' <summary>
@@ -161,6 +185,11 @@ Public Class Sandbox
         ' through the static type of its argument, so the generic helper below
         ' is closed over the concrete tool type of every registry entry
         ' instead of being called with an Object.
+        ' A background task job runs the same LLM client the session talks
+        ' to, so the registry is handed the client while the tools are
+        ' registered.
+        Call Jobs.AttachClient(client)
+
         Dim factory As Reflection.MethodInfo = GetType(Sandbox).GetMethod(
             NameOf(RegisterTool),
             Reflection.BindingFlags.Instance Or Reflection.BindingFlags.NonPublic)

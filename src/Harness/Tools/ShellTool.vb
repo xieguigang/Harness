@@ -1,7 +1,6 @@
 Imports System.ComponentModel
 Imports System.Diagnostics
 Imports System.IO
-Imports System.Runtime.InteropServices
 Imports System.Text
 Imports Microsoft.VisualBasic.CommandLine.Reflection
 
@@ -20,15 +19,6 @@ Namespace Tools
     ''' supports a one-shot escalation when the sandbox denies the call.
     ''' </summary>
     Public Class ShellTool
-
-        ''' <summary>Maximum number of characters reported per output stream.</summary>
-        Private Const MaxOutputChars As Integer = 20000
-
-        ''' <summary>Wait used when the caller does not ask for a specific timeout.</summary>
-        Private Const DefaultTimeoutMs As Integer = 120000
-
-        ''' <summary>Upper bound on the wait, so a runaway process cannot hang the agent.</summary>
-        Private Const MaxTimeoutMs As Integer = 600000
 
         Private ReadOnly _sandbox As Sandbox
 
@@ -85,12 +75,12 @@ Namespace Tools
                 Return $"Error: working directory not found: {cwd}"
             End If
 
-            Dim wait As Integer = ClampTimeout(timeout)
+            Dim wait As Integer = ProcessLaunch.ClampTimeout(timeout)
 
             Dim psi As ProcessStartInfo
 
             Try
-                psi = CreateStartInfo(command, cwd)
+                psi = ProcessLaunch.CreateShellStartInfo(command, cwd)
             Catch ex As Exception
                 Return $"Error: cannot prepare the command: {ex.Message}"
             End Try
@@ -139,99 +129,16 @@ Namespace Tools
 
             Dim stdoutCut As Boolean = False
             Dim stderrCut As Boolean = False
-            Dim stdoutText As String = Limit(stdout, stdoutCut)
-            Dim stderrText As String = Limit(stderr, stderrCut)
+            Dim stdoutText As String = ProcessLaunch.Limit(stdout, stdoutCut)
+            Dim stderrText As String = ProcessLaunch.Limit(stderr, stderrCut)
 
             Dim sb As New StringBuilder()
             sb.AppendLine($"<exit_code>{exitCode}</exit_code>")
-            Call AppendStream(sb, "stdout", stdoutText, stdoutCut)
-            Call AppendStream(sb, "stderr", stderrText, stderrCut)
+            Call ProcessLaunch.AppendStream(sb, "stdout", stdoutText, stdoutCut)
+            Call ProcessLaunch.AppendStream(sb, "stderr", stderrText, stderrCut)
 
             Return sb.ToString()
         End Function
-
-        ''' <summary>
-        ''' Build the launch settings for the platform shell. The command
-        ''' string is handed over as a single argument so that quoting and
-        ''' redirection stay intact: bash receives it with "-c", and
-        ''' PowerShell receives it base64 encoded through "-EncodedCommand",
-        ''' which avoids every quoting pitfall of "-Command".
-        ''' </summary>
-        Private Shared Function CreateStartInfo(command As String, workDir As String) As ProcessStartInfo
-            Dim psi As New ProcessStartInfo()
-            psi.WorkingDirectory = workDir
-            psi.UseShellExecute = False
-            psi.CreateNoWindow = True
-            psi.RedirectStandardInput = True
-            psi.RedirectStandardOutput = True
-            psi.RedirectStandardError = True
-            psi.StandardOutputEncoding = Encoding.UTF8
-            psi.StandardErrorEncoding = Encoding.UTF8
-
-            If RuntimeInformation.IsOSPlatform(OSPlatform.Windows) Then
-                ' Two adjustments to the child session:
-                '  - force UTF-8 so that non ASCII output survives the pipe;
-                '  - silence the progress stream, otherwise PowerShell wraps
-                '    stderr in a CLIXML envelope as soon as it emits its
-                '    "Preparing modules for first use." record.
-                Dim script As String = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8" & vbLf &
-                                       "$ProgressPreference='SilentlyContinue'" & vbLf &
-                                       command
-
-                psi.FileName = "powershell.exe"
-                Call psi.ArgumentList.Add("-NoProfile")
-                Call psi.ArgumentList.Add("-NonInteractive")
-                Call psi.ArgumentList.Add("-EncodedCommand")
-                Call psi.ArgumentList.Add(Convert.ToBase64String(Encoding.Unicode.GetBytes(script)))
-            Else
-                psi.FileName = "/bin/bash"
-                Call psi.ArgumentList.Add("-c")
-                Call psi.ArgumentList.Add(command)
-            End If
-
-            Return psi
-        End Function
-
-        Private Shared Function ClampTimeout(value As Double) As Integer
-            If Double.IsNaN(value) OrElse Double.IsInfinity(value) OrElse value <= 0 Then
-                Return DefaultTimeoutMs
-            End If
-
-            If value >= MaxTimeoutMs Then
-                Return MaxTimeoutMs
-            End If
-
-            Return CInt(Math.Floor(value))
-        End Function
-
-        ''' <summary>
-        ''' Trim trailing whitespace and cap the text so that a chatty
-        ''' command cannot flood the model context.
-        ''' </summary>
-        Private Shared Function Limit(text As String, ByRef truncated As Boolean) As String
-            Dim value As String = If(text, "").TrimEnd()
-
-            If value.Length <= MaxOutputChars Then
-                Return value
-            End If
-
-            truncated = True
-            Return value.Substring(0, MaxOutputChars)
-        End Function
-
-        Private Shared Sub AppendStream(sb As StringBuilder, tag As String, text As String, truncated As Boolean)
-            sb.AppendLine($"<{tag}>")
-
-            If text.Length > 0 Then
-                sb.AppendLine(text)
-            End If
-
-            If truncated Then
-                sb.AppendLine($"[output truncated at {MaxOutputChars} characters]")
-            End If
-
-            sb.AppendLine($"</{tag}>")
-        End Sub
 
     End Class
 

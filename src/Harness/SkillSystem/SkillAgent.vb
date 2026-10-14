@@ -1,4 +1,5 @@
 Imports System.Text
+Imports System.Threading
 Imports Microsoft.VisualBasic.MIME.application.json
 Imports Ollama
 Imports Ollama.JSON.FunctionCall
@@ -72,7 +73,13 @@ Public Class SkillAgent
     ''' skill. Returns Nothing if no skill is relevant or if the LLM
     ''' response cannot be parsed.
     ''' </summary>
-    Public Async Function MatchTaskToSkill(userTask As String) As Task(Of SkillMetadata)
+    ''' <param name="userTask">The natural-language task from the user.</param>
+    ''' <param name="cancellationToken">
+    ''' Token that stops the routing call, so that a background task can be
+    ''' cancelled while it is still deciding which skill to use.
+    ''' </param>
+    Public Async Function MatchTaskToSkill(userTask As String,
+                                           Optional cancellationToken As CancellationToken = Nothing) As Task(Of SkillMetadata)
         Dim allMetadata As IReadOnlyList(Of SkillMetadata) = _manager.GetAllMetadata()
         If allMetadata.Count = 0 Then
             Return Nothing
@@ -100,7 +107,7 @@ Public Class SkillAgent
         sb.AppendLine()
         sb.AppendLine("Reply now with the skill name:")
 
-        Dim response = Await _ollama.Chat(sb.ToString())
+        Dim response = Await _ollama.Chat(sb.ToString(), cancellationToken)
 
         ' Parse the LLM output: trim, strip code fences, take first token
         Dim raw As String = If(response?.output, "").Trim()
@@ -137,13 +144,19 @@ Public Class SkillAgent
     ''' 4. Return the LLM's final answer.
     ''' </summary>
     ''' <param name="userTask">The natural-language task from the user.</param>
+    ''' <param name="cancellationToken">
+    ''' Token that stops the task while it runs: it reaches the routing call
+    ''' and the execution call, which is what lets a background task job be
+    ''' cancelled without waiting for the model to finish.
+    ''' </param>
     ''' <returns>A <see cref="SkillExecutionResult"/> with the matched skill name and the LLM output.</returns>
-    Public Async Function RunTask(userTask As String) As Task(Of SkillExecutionResult)
+    Public Async Function RunTask(userTask As String,
+                                  Optional cancellationToken As CancellationToken = Nothing) As Task(Of SkillExecutionResult)
         Dim result As New SkillExecutionResult()
         result.UserTask = userTask
 
         ' Layer 2 trigger: classify the task
-        Dim matched As SkillMetadata = Await MatchTaskToSkill(userTask)
+        Dim matched As SkillMetadata = Await MatchTaskToSkill(userTask, cancellationToken)
         If matched Is Nothing Then
             result.Success = False
             result.Answer = "No matching skill was found for this task. " &
@@ -167,7 +180,7 @@ Public Class SkillAgent
         ' execute_skill_script, the function tool we registered in the
         ' constructor will run the script and feed its output back to
         ' the LLM as the tool result.
-        Dim response = Await _ollama.Chat(prompt)
+        Dim response = Await _ollama.Chat(prompt, cancellationToken)
 
         result.Success = True
         result.Answer = If(response?.output, "")
