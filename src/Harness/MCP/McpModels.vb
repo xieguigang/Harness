@@ -114,7 +114,7 @@ Namespace MCP
         Public Function ToText() As String
             If Not String.IsNullOrEmpty(Text) Then Return Text
 
-            Select Case If(Type, "").ToLower()
+            Select Case If(Type Is Nothing, "", Type).ToLower()
                 Case "resource_link"
                     Dim name As String = JsonRpc.Str(Raw, "name")
                     Dim desc As String = JsonRpc.Str(Raw, "description")
@@ -126,7 +126,7 @@ Namespace MCP
                     If Not String.IsNullOrEmpty(embedded) Then Return embedded
                     Return $"[embedded resource] {JsonRpc.Str(Raw, "resource", "uri")} ({JsonRpc.Str(Raw, "resource", "mimeType")})"
                 Case "image", "audio"
-                    Return $"[{Type}] {MimeType} ({If(Data, "").Length} chars of base64)"
+                    Return $"[{Type}] {MimeType} ({If(Data Is Nothing, 0, Data.Length)} chars of base64)"
                 Case Else
                     If Not String.IsNullOrEmpty(Data) Then
                         Return $"[{Type}] {Uri} ({MimeType}, {Data.Length} chars of base64)"

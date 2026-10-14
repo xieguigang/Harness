@@ -22,6 +22,14 @@ Namespace MCP
         ''' </summary>
         Event MessageReceived As Action(Of JsonObject)
 
+        ''' <summary>
+        ''' raised when the transport can no longer carry messages, for example because
+        ''' the child process exited or the peer closed the connection. it lets
+        ''' <see cref="McpClient"/> fail the pending requests immediately instead of
+        ''' waiting for their timeout.
+        ''' </summary>
+        Event TransportClosed As Action
+
         ''' <summary>close the connection and release resources.</summary>
         Function CloseAsync() As Task
 

@@ -46,6 +46,7 @@ Namespace MCP
         Private _nextId As Long = 0
         Private _capabilities As McpServerCapabilities
         Private _requestTimeout As TimeSpan = TimeSpan.FromMilliseconds(DefaultRequestTimeoutMs)
+        Private _transportClosed As Boolean
         Private _disposed As Boolean
 
         Public ReadOnly Property Name As String
@@ -81,6 +82,16 @@ Namespace MCP
             _transport = transport
             _idPrefix = $"h{Interlocked.Increment(_clientSeq)}-"
             AddHandler _transport.MessageReceived, AddressOf OnMessage
+            AddHandler _transport.TransportClosed, AddressOf OnTransportClosed
+        End Sub
+
+        ''' <summary>
+        ''' the transport is gone (the server process exited, the connection dropped):
+        ''' every pending request has to end now instead of waiting for its timeout.
+        ''' </summary>
+        Private Sub OnTransportClosed()
+            _transportClosed = True
+            FailPendingRequests($"the mcp connection to the server '{_name}' was lost.")
         End Sub
 
         Private Sub OnMessage(msg As JsonObject)
@@ -159,7 +170,16 @@ Namespace MCP
             initParams("clientInfo") = clientInfo
 
             Dim initResp As JsonObject = Await RequestAsync("initialize", initParams, cancellationToken).ConfigureAwait(False)
-            _capabilities = McpServerCapabilities.FromJson(TryCast(initResp("result"), jsobj))
+            Dim initResult As jsobj = TryCast(initResp("result"), jsobj)
+            Dim capsNode As JsonElement = Nothing
+
+            If initResult IsNot Nothing Then
+                capsNode = initResult("capabilities")
+            End If
+
+            ' the capabilities object is nested inside the initialize result, handing the
+            ' whole result over would report "the server has no capability at all"
+            _capabilities = McpServerCapabilities.FromJson(TryCast(capsNode, jsobj))
 
             Dim notif As jsobj = JsonRpc.MakeNotification("notifications/initialized", New jsobj())
             Await _transport.SendAsync(notif, cancellationToken).ConfigureAwait(False)
@@ -168,6 +188,10 @@ Namespace MCP
         Private Async Function RequestAsync(method As String, params As JsonObject, ct As CancellationToken) As Task(Of JsonObject)
             If _disposed Then
                 Throw New ObjectDisposedException(NameOf(McpClient))
+            End If
+
+            If _transportClosed Then
+                Throw New InvalidOperationException($"the mcp connection to the server '{_name}' is closed.")
             End If
 
             Dim id As String = _idPrefix & Interlocked.Increment(_nextId).ToString()
@@ -272,7 +296,7 @@ Namespace MCP
         Public Async Function CallToolAsync(toolName As String, arguments As JsonObject, Optional ct As CancellationToken = Nothing) As Task(Of McpCallToolResult)
             Dim params As New jsobj()
             params("name") = New jsVal(toolName)
-            params("arguments") = If(arguments, New jsobj())
+            params("arguments") = If(arguments Is Nothing, New jsobj(), arguments)
             Dim resp As JsonObject = Await RequestAsync("tools/call", params, ct).ConfigureAwait(False)
             Dim result As jsobj = TryCast(resp("result"), jsobj)
             Return McpCallToolResult.FromJson(result)
@@ -305,7 +329,7 @@ Namespace MCP
         Public Async Function GetPromptAsync(name As String, arguments As JsonObject, Optional ct As CancellationToken = Nothing) As Task(Of McpGetPromptResult)
             Dim params As New jsobj()
             params("name") = New jsVal(name)
-            params("arguments") = If(arguments, New jsobj())
+            params("arguments") = If(arguments Is Nothing, New jsobj(), arguments)
             Dim resp As JsonObject = Await RequestAsync("prompts/get", params, ct).ConfigureAwait(False)
             Dim result As jsobj = TryCast(resp("result"), jsobj)
             Return McpGetPromptResult.FromJson(result)
@@ -324,6 +348,7 @@ Namespace MCP
             If Not _disposed Then
                 _disposed = True
                 RemoveHandler _transport.MessageReceived, AddressOf OnMessage
+                RemoveHandler _transport.TransportClosed, AddressOf OnTransportClosed
                 FailPendingRequests($"the mcp client '{_name}' was disposed.")
                 Try
                     _transport.CloseAsync().GetAwaiter().GetResult()

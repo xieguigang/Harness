@@ -29,6 +29,7 @@ Namespace MCP
         Private ReadOnly _writeSem As New SemaphoreSlim(1, 1)
 
         Public Event MessageReceived As Action(Of JsonObject) Implements IMcpTransport.MessageReceived
+        Public Event TransportClosed As Action Implements IMcpTransport.TransportClosed
 
         Public Sub New(server As McpStdioServer)
             _server = server
@@ -89,6 +90,10 @@ Namespace MCP
                     Console.Error.WriteLine("[MCP stdio] transport error: " & ex.Message)
                 End If
             End Try
+
+            ' the pipe is gone (process exited or stdin was closed): let the client
+            ' fail its pending requests at once instead of waiting for their timeout
+            RaiseEvent TransportClosed()
         End Function
 
         ' drain stderr so a chatty server never blocks on a full pipe

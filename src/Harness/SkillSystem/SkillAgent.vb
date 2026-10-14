@@ -52,6 +52,10 @@ Namespace SkillSystem
             ' This makes "execute_skill_script" available to the LLM as a
             ' function-call tool for the lifetime of this agent.
             RegisterScriptExecutionTool()
+
+            ' the skills reference many files (the nature skills rely on a shared
+            ' package), so the model needs a way to pull a single file in on demand
+            RegisterSkillFileTool()
         End Sub
 
         ''' <summary>
@@ -82,7 +86,10 @@ Namespace SkillSystem
         ''' </param>
         Public Async Function MatchTaskToSkill(userTask As String,
                                            Optional cancellationToken As CancellationToken = Nothing) As Task(Of SkillMetadata)
-            Dim allMetadata As IReadOnlyList(Of SkillMetadata) = _manager.GetAllMetadata()
+            ' the router only sees the user invocable workflows: the internal shared
+            ' support packages (nature-shared, for example) are dependencies of other
+            ' skills and must never be selected on their own
+            Dim allMetadata As IReadOnlyList(Of SkillMetadata) = _manager.GetRoutableMetadata()
             If allMetadata.Count = 0 Then
                 Return Nothing
             End If
@@ -199,20 +206,25 @@ Namespace SkillSystem
                                           userTask As String) As String
             Dim sb As New StringBuilder()
             sb.AppendLine("You are now executing a specific skill. Follow the skill's")
-            sb.AppendLine("instructions precisely. If the skill references scripts under")
-            sb.AppendLine("scripts/, references/, or assets/, you may invoke them by calling")
-            sb.AppendLine("the execute_skill_script function tool. The tool will run the")
-            sb.AppendLine("script in a sandbox and return its stdout to you.")
+            sb.AppendLine("instructions precisely.")
+            sb.AppendLine()
+            sb.AppendLine("Two tools are available:")
+            sb.AppendLine("- read_skill_file(skill_name, relative_path) reads a file that the")
+            sb.AppendLine("  skill references (documents, templates, shared package files such")
+            sb.AppendLine("  as '../nature-shared/core/x.md') without loading the whole skill.")
+            sb.AppendLine("- execute_skill_script(skill_name, script_name, args) runs one of the")
+            sb.AppendLine("  skill's scripts; args is a plain command line string and its")
+            sb.AppendLine("  whitespace separated words reach the script as separate arguments.")
             sb.AppendLine()
             sb.AppendLine(definition.BuildPromptFragment())
             sb.AppendLine("## User Task")
             sb.AppendLine(userTask)
             sb.AppendLine()
             sb.AppendLine("## Your Job")
-            sb.AppendLine("Execute the skill for the given task. Use execute_skill_script")
-            sb.AppendLine("whenever the skill instructs you to run a script. Produce the")
-            sb.AppendLine("final result in the format specified by the skill's Output")
-            sb.AppendLine("Specification section.")
+            sb.AppendLine("Execute the skill for the given task. Read the files the skill")
+            sb.AppendLine("mentions with read_skill_file before relying on them, and use")
+            sb.AppendLine("execute_skill_script whenever the skill instructs you to run a")
+            sb.AppendLine("script. Produce the final result in the format the skill asks for.")
             Return sb.ToString()
         End Function
 
@@ -246,7 +258,7 @@ Namespace SkillSystem
 
             Dim p3 As New ParameterProperties(
             "args",
-            "Optional. A single string argument forwarded to the script. Pass JSON or plain text as needed.",
+            "Optional. A command line string forwarded to the script; it is split on whitespace like a shell would (quote a value to keep its spaces), e.g. '--input data.csv --limit 10'.",
             TypeCode.String)
 
             Dim funcModel As New FunctionModel(
@@ -260,6 +272,49 @@ Namespace SkillSystem
             ' that actually runs when the LLM invokes this tool.
             Call _ollama.AddFunction(funcModel, f:=AddressOf ScriptExecution)
         End Sub
+
+        ''' <summary>
+        ''' Register the "read_skill_file" function tool: it reads one file a skill
+        ''' references, including the files of a sibling shared package. This is the
+        ''' on-demand half of the progressive disclosure - the layer 2 prompt lists the
+        ''' files, the model loads only the ones it really needs.
+        ''' </summary>
+        Private Sub RegisterSkillFileTool()
+            Dim p1 As New ParameterProperties(
+            "skill_name",
+            "The name of the skill that references the file.",
+            TypeCode.String)
+
+            Dim p2 As New ParameterProperties(
+            "relative_path",
+            "The path exactly as written in the skill, e.g. 'references/spec.md' or '../nature-shared/core/reader-workflow.md'.",
+            TypeCode.String)
+
+            Dim funcModel As New FunctionModel(
+            "read_skill_file",
+            "Read a text file a skill references (documentation, templates, shared package files). " &
+            "The path is resolved inside the skills root: a path escaping it is rejected. " &
+            "Returns the file content as a string.",
+            p1, p2)
+
+            Call _ollama.AddFunction(funcModel, f:=AddressOf SkillFileRead)
+        End Sub
+
+        Private Function SkillFileRead([call] As FunctionCall) As String
+            Dim skillName As String = [call]!skill_name?.ToString()
+            Dim relativePath As String = [call]!relative_path?.ToString()
+
+            If String.IsNullOrEmpty(skillName) OrElse String.IsNullOrEmpty(relativePath) Then
+                Return "{""error"": ""skill_name and relative_path are required""}"
+            End If
+
+            Dim content As String = _manager.ReadSkillFile(skillName, relativePath)
+            Dim escaped As String = JSONTextParser.JsonEscape(content)
+
+            Return $"{{""skill"": ""{JSONTextParser.JsonEscape(skillName)}"", " &
+                   $"""path"": ""{JSONTextParser.JsonEscape(relativePath)}"", " &
+                   $"""content"": ""{escaped}""}}"
+        End Function
 
         Private Function ScriptExecution([call] As FunctionCall) As String
             Dim skillName As String = [call]!skill_name?.ToString()

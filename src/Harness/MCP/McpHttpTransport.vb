@@ -28,6 +28,7 @@ Namespace MCP
         Private _disposed As Boolean
 
         Public Event MessageReceived As Action(Of JsonObject) Implements IMcpTransport.MessageReceived
+        Public Event TransportClosed As Action Implements IMcpTransport.TransportClosed
 
         Public Sub New(server As McpHttpServer)
             _server = server
@@ -72,7 +73,7 @@ Namespace MCP
                         _sessionId = response.Headers.GetValues("Mcp-Session-Id").FirstOrDefault()
                     End If
 
-                    Dim mediaType As String = If(response.Content.Headers.ContentType?.MediaType, "")
+                    Dim mediaType As String = If(response.Content.Headers.ContentType Is Nothing, "", response.Content.Headers.ContentType.MediaType)
 
                     If mediaType.Contains("text/event-stream") Then
                         Await ReadSseAsync(response.Content.ReadAsStream(), expectId, cancellationToken).ConfigureAwait(False)
@@ -160,6 +161,8 @@ Namespace MCP
                 _http = Nothing
                 _disposed = True
             End If
+
+            RaiseEvent TransportClosed()
             Return Task.CompletedTask
         End Function
 

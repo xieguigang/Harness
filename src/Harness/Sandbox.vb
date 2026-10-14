@@ -47,6 +47,12 @@ Public Class Sandbox
         Function() New Tools.BackgroundJobManager(wsRoot))
 
     ''' <summary>
+    ''' The MCP bridge created by <see cref="RegisterMcpServers"/>, if the
+    ''' workspace declares any MCP server.
+    ''' </summary>
+    Private wsMcp As MCP.McpToolBridge
+
+    ''' <summary>
     ''' Raised when a write or execute operation needs the user's consent.
     ''' Set <see cref="PermissionEventArg.PermissionGranted"/> to True inside
     ''' the handler to let the operation proceed.
@@ -168,6 +174,11 @@ Public Class Sandbox
         ' registered.
         Call Jobs.AttachClient(client)
 
+        ' the mcp servers declared in the workspace configuration are bridged in
+        ' first: an unreachable server only drops its own tools and never blocks
+        ' the local tool registration below
+        Call RegisterMcpServers(client)
+
         Dim factory As Reflection.MethodInfo = GetType(Sandbox).GetMethod(
             NameOf(RegisterTool),
             Reflection.BindingFlags.Instance Or Reflection.BindingFlags.NonPublic)
@@ -200,6 +211,88 @@ Public Class Sandbox
         Dim tool As T = DirectCast(instance, T)
 
         Call client.AddFunction(tool, name)
+    End Sub
+
+    ' ========================================================================
+    ' MCP servers
+    ' ========================================================================
+
+    ''' <summary>
+    ''' The MCP bridge of the last <see cref="RegisterMcpServers"/> call, or
+    ''' Nothing when the workspace declares no MCP server.
+    ''' </summary>
+    Public ReadOnly Property McpBridge As MCP.McpToolBridge
+        Get
+            Return wsMcp
+        End Get
+    End Property
+
+    ''' <summary>
+    ''' Connect to the MCP servers declared in the workspace configuration
+    ''' (<c>&lt;workspace&gt;\.harness\mcp.json</c>) and register their tools,
+    ''' resources and prompts on <paramref name="client"/>.
+    ''' 
+    ''' This never throws: a missing configuration file simply yields no
+    ''' server, a malformed entry is reported on the diagnostics stream, and a
+    ''' server that cannot start is recorded on
+    ''' <see cref="MCP.McpToolBridge.Failures"/> - the rest of the session keeps
+    ''' working without it.
+    ''' </summary>
+    ''' <param name="client">The client that should expose the MCP primitives.</param>
+    ''' <param name="configPath">Overrides the default configuration path.</param>
+    Public Function RegisterMcpServers(client As LLMClient, Optional configPath As String = Nothing) As Sandbox
+        If client Is Nothing Then
+            Throw New ArgumentNullException(NameOf(client))
+        End If
+
+        Dim path As String = If(String.IsNullOrEmpty(configPath), MCP.McpConfig.DefaultPath(wsRoot), configPath)
+        Dim errors() As String = Nothing
+        Dim servers As MCP.McpServerDescriptor() = MCP.McpConfig.Load(path, wsRoot, errors)
+
+        If errors.Length > 0 Then
+            For Each problem In errors
+                Console.Error.WriteLine("[MCP] " & problem)
+            Next
+        End If
+
+        If servers.Length = 0 Then
+            Return Me
+        End If
+
+        Dim bridge As New MCP.McpToolBridge(servers)
+
+        Try
+            ' the bridge awaits with ConfigureAwait(False) throughout, so a
+            ' synchronous wait here cannot deadlock on a ui thread
+            Call bridge.ConnectAllAsync().GetAwaiter().GetResult()
+            Call bridge.Attach(client)
+
+            For Each failure In bridge.Failures
+                Console.Error.WriteLine("[MCP] " & failure)
+            Next
+        Catch ex As Exception
+            Console.Error.WriteLine("[MCP] unable to initialise the mcp servers: " & ex.Message)
+        End Try
+
+        Call CloseMcpServers()
+        wsMcp = bridge
+
+        Return Me
+    End Function
+
+    ''' <summary>
+    ''' Close every MCP server process / session opened by this sandbox. The
+    ''' host should call it when the session ends.
+    ''' </summary>
+    Public Sub CloseMcpServers()
+        If wsMcp IsNot Nothing Then
+            Try
+                wsMcp.Dispose()
+            Catch ex As Exception
+                Console.Error.WriteLine("[MCP] close error: " & ex.Message)
+            End Try
+            wsMcp = Nothing
+        End If
     End Sub
 
     ' ========================================================================

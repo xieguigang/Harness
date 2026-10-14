@@ -38,8 +38,8 @@
       <Platform Solution="Debug|x64" Project="x64" />
     </Project>
   </Folder>
-  <Project Path="Ollama/test/test.vbproj" Id="939fa896-933a-44f2-9f75-75e8d86f1237">
+  <Project Path="Harness/test/test.vbproj">
     <BuildType Solution="Rsharp_app_release|*" Project="Release" />
-    <Platform Solution="Debug|x64" Project="x64" />
+    <Platform Solution="*|x64" Project="x64" />
   </Project>
 </Solution>
