@@ -28,10 +28,9 @@
 ' 原始词表项（例如 "▁weather"），而真正写进上下文的是解码（ByteLevel 逆映射）之后的文本。
 ' ---------------------------------------------------------------------------
 
-Imports System.Collections.Generic
-Imports System.Diagnostics
-Imports Microsoft.VisualBasic.MachineLearning.LLM
 Imports Microsoft.VisualBasic.Data.NLP.ChineseTokenizer.HuggingFace
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Agent.ToolCalls
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Text
 
 Public Class DeepSeekTokenizerAdapter
     Implements ITextCodec

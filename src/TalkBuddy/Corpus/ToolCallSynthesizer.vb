@@ -24,8 +24,7 @@
 ' "训练时喂给模型的 JSON" 与 "约束解码能够生成的 JSON" 在键顺序与形态上完全一致。
 ' ---------------------------------------------------------------------------
 
-Imports System.Collections.Generic
-Imports Microsoft.VisualBasic.MachineLearning.LLM
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Agent.ToolCalls
 
 Public Class ToolCallSynthesizer
 

@@ -12,11 +12,15 @@
 '   Stage 3  工具 SFT    合成工具调用轨迹，工具结果不计损失    → 学会输出调用片段
 ' ---------------------------------------------------------------------------
 
-Imports System.Collections.Generic
-Imports Microsoft.VisualBasic.MachineLearning.LLM
-Imports Microsoft.VisualBasic.MachineLearning.TensorFlow
-Imports GpuTensor = Microsoft.VisualBasic.Computing.ILCuda.GPUTensor
+Imports Microsoft.VisualBasic.DeepLearning.LLM
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Agent
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Agent.ToolCalls
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Generator
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Sampler
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Text
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Trainer
 Imports Diagnostics = System.Diagnostics
+Imports GpuTensor = Microsoft.VisualBasic.Computing.ILCuda.GPUTensor
 
 Public Class DemoPipeline
 
@@ -573,7 +577,7 @@ Public Class DemoPipeline
         ConsoleReport.Note("")
 
         For Each config In configs
-            Dim sampler As New Sampler(config)
+            Dim sampler As New LLMSampler(config)
             Dim generator As New TextGenerator(_model, sampler)
 
             ' 这一节比较的是"采样策略如何改变输出的多样性"，因此刻意<b>不</b>设停止符：
@@ -667,7 +671,7 @@ Public Class DemoPipeline
     ''' 一旦允许提前停止，两条路径的步数可能不同，加速比就没有意义了。
     ''' </remarks>
     Private Function Generate(promptIds As Integer(), useCache As Boolean) As GenerationResult
-        Dim generator As New TextGenerator(_model, New Sampler(SamplingConfig.GreedySampling()))
+        Dim generator As New TextGenerator(_model, New LLMSampler(SamplingConfig.GreedySampling()))
 
         Dim options As New GenerationOptions With {
             .MaxNewTokens = DemoConfig.KvCacheProbeTokens,
@@ -772,11 +776,11 @@ Public Class DemoPipeline
         ConsoleReport.KeyValue("工具", tool.Name)
         ConsoleReport.KeyValue("参数 schema", String.Join(" ; ",
             tool.Schema.Properties.Select(Function(p)
-                If p.EnumValues IsNot Nothing AndAlso p.EnumValues.Length > 0 Then
-                    Return $"{p.Name} ∈ {{{String.Join(" | ", p.EnumValues)}}}"
-                End If
-                Return $"{p.Name}: {p.Type}"
-            End Function)))
+                                              If p.EnumValues IsNot Nothing AndAlso p.EnumValues.Length > 0 Then
+                                                  Return $"{p.Name} ∈ {{{String.Join(" | ", p.EnumValues)}}}"
+                                              End If
+                                              Return $"{p.Name}: {p.Type}"
+                                          End Function)))
 
         Dim decoder As New ConstrainedDecoder(tool.Schema, _codec.Vocabulary)
 
@@ -785,7 +789,7 @@ Public Class DemoPipeline
 
         Dim head = ToolCallProtocol.FormatCallHeader(tool.Name)
         Dim stream = TokenStream.Create(_model, _codec.Encode(head), useCache:=False)
-        Dim sampler As New Sampler(SamplingConfig.GreedySampling())
+        Dim sampler As New LLMSampler(SamplingConfig.GreedySampling())
 
         Dim tokens = decoder.Generate(stream, sampler, 64)
 

@@ -14,9 +14,8 @@
 ' 而不是"能写一篇通顺的文章"。
 ' ---------------------------------------------------------------------------
 
-Imports System.Collections.Generic
 Imports System.Text
-Imports Microsoft.VisualBasic.MachineLearning.LLM
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Trainer
 
 Public Class EmbeddedCorpus
 

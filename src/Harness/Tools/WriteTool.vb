@@ -85,9 +85,9 @@ Namespace Tools
 
                 ' Keep the encoding shape of an existing file; a brand new
                 ' file is written without a byte order mark.
-                Dim isBom As Boolean = existed AndAlso HasUtf8Bom(fullPath)
+                Dim isBom As Boolean = existed AndAlso TextFileUtils.HasUtf8Bom(fullPath)
 
-                Call File.WriteAllText(fullPath, If(content, ""), New UTF8Encoding(isBom))
+                Call TextFileUtils.WriteAllText(fullPath, content, isBom)
             Catch ex As Exception
                 Return $"Error writing file '{fullPath}': {ex.Message}"
             End Try
@@ -100,22 +100,6 @@ Namespace Tools
             sb.Append("</content>")
 
             Return sb.ToString()
-        End Function
-
-        ''' <summary>
-        ''' True when the file starts with a UTF-8 byte order mark, so that
-        ''' replacing it keeps the same encoding shape.
-        ''' </summary>
-        Private Shared Function HasUtf8Bom(target As String) As Boolean
-            Using stream As FileStream = File.OpenRead(target)
-                Dim head(2) As Byte
-
-                If stream.Read(head, 0, 3) < 3 Then
-                    Return False
-                End If
-
-                Return head(0) = &HEF AndAlso head(1) = &HBB AndAlso head(2) = &HBF
-            End Using
         End Function
 
     End Class

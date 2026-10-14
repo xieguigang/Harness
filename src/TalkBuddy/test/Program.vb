@@ -27,10 +27,9 @@
 '   --profile         打印训练步内部各阶段的实测耗时（用于定位瓶颈）
 ' ---------------------------------------------------------------------------
 
-Imports System
 ' TalkBuddy.vbproj 的 RootNamespace 是 TalkBuddy，装配层类型都在这个名字空间下
+Imports Microsoft.VisualBasic.DeepLearning.LLM
 Imports TalkBuddy
-Imports Microsoft.VisualBasic.MachineLearning.LLM
 
 Module Program
 

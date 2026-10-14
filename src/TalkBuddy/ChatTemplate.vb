@@ -24,8 +24,8 @@
 ' 每段单独编码后拼接，因此掩码与 token 一一对应，不需要事后做字符串位置回溯。
 ' ---------------------------------------------------------------------------
 
-Imports System.Collections.Generic
-Imports Microsoft.VisualBasic.MachineLearning.LLM
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Agent.ToolCalls
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Trainer
 
 ''' <summary>一条对话消息。</summary>
 Public Class ChatMessage

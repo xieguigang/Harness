@@ -41,6 +41,9 @@
     <Project Path="../../GCModeller/src/runtime/sciBASIC#/Data_science/Mathematica/Math/Math/Math.NET5.vbproj">
       <Platform Solution="*|x64" Project="x64" />
     </Project>
+    <Project Path="../../GCModeller/src/runtime/sciBASIC#/llm/llm.vbproj">
+      <Platform Solution="*|x64" Project="x64" />
+    </Project>
   </Folder>
   <Project Path="TalkBuddy/TalkBuddy.vbproj">
     <Platform Solution="*|x64" Project="x64" />

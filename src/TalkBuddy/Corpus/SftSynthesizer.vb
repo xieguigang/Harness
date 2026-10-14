@@ -11,9 +11,6 @@
 '      而不是"复述用户问了什么"。
 ' ---------------------------------------------------------------------------
 
-Imports System.Collections.Generic
-Imports Microsoft.VisualBasic.MachineLearning.LLM
-
 Public Class SftSynthesizer
 
     Private Structure QaPair

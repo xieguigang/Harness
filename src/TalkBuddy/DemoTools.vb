@@ -11,8 +11,7 @@
 '   string（自由字符串）、enum（枚举，约束解码最有用武之地）、number（数字字面量）。
 ' ---------------------------------------------------------------------------
 
-Imports System.Collections.Generic
-Imports Microsoft.VisualBasic.MachineLearning.LLM
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Agent.ToolCalls
 
 ''' <summary>demo 工具集的构造入口。</summary>
 Public Module DemoTools

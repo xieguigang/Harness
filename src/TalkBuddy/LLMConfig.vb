@@ -9,7 +9,8 @@
 ' 输出层与词嵌入做了权重绑定 —— 否则这一项会再翻一倍。
 ' ---------------------------------------------------------------------------
 
-Imports Microsoft.VisualBasic.MachineLearning.LLM
+Imports Microsoft.VisualBasic.DeepLearning.LLM
+Imports Microsoft.VisualBasic.DeepLearning.LLM.Trainer
 
 ''' <summary>demo 的模型 / 训练 / 分词器配置。</summary>
 Public Module DemoConfig
