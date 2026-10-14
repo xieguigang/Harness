@@ -22,11 +22,23 @@ Namespace HarnessSelfTest
             Return New LLMClient(New OpenAIProvider("https://api.deepseek.com", apikey), "deepseek-flash")
         End Function
 
+        ''' <summary>
+        ''' The same client as <see cref="GetLLMs"/>, with the model name overridden -
+        ''' same endpoint and key, only the model changes.
+        ''' </summary>
+        Public Function GetLLMs(model As String) As LLMClient
+            Return New LLMClient(New OpenAIProvider("https://api.deepseek.com", apikey), model)
+        End Function
+
         Function Main(args As String()) As Integer
             If args IsNot Nothing AndAlso args.Length > 0 Then
                 Select Case args(0)
                     Case "--stub-mcp-server"
                         Return McpStubServer.Run(args.Skip(1).ToArray())
+                    Case "--polish"
+                        ' the async test is awaited synchronously: a console application
+                        ' has no SynchronizationContext, so this cannot deadlock
+                        Return NaturePolishingSelfTest.RunAsync(args.Skip(1).ToArray()).GetAwaiter().GetResult()
                     Case "--help", "-h"
                         PrintUsage()
                         Return 0
@@ -46,7 +58,13 @@ Namespace HarnessSelfTest
             Console.WriteLine("HarnessSelfTest - harness mcp self test")
             Console.WriteLine()
             Console.WriteLine("  HarnessSelfTest                    run the offline mcp self test")
+            Console.WriteLine("  HarnessSelfTest --polish           run the real nature-polishing skill end to end test")
             Console.WriteLine("  HarnessSelfTest --stub-mcp-server  act as the stub mcp server on stdio")
+            Console.WriteLine()
+            Console.WriteLine("polishing options (used after --polish):")
+            Console.WriteLine("  --file <path>     the draft to polish (default: a built in sample paragraph)")
+            Console.WriteLine("  --skills <path>   the nature skills root (default: C:\Users\Administrator\Downloads\nature-skills\skills)")
+            Console.WriteLine("  --model <name>    override the model name (default: the one GetLLMs uses)")
             Console.WriteLine()
             Console.WriteLine("stub options:")
             Console.WriteLine("  --tool-name <name>            tool exposed by the stub (default: echo)")
