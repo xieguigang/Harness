@@ -108,9 +108,9 @@ Public Class Sandbox
     ''' <summary>
     ''' Register every tool backed by this sandbox into an Ollama client, so
     ''' that the model can call them by their exported names (currently
-    ''' "read", "grep", "glob", "edit" and "write"). Each tool instance is
-    ''' bound to this sandbox and therefore shares its workspace and security
-    ''' policy.
+    ''' "read", "grep", "glob", "edit", "write" and "shell"). Each tool
+    ''' instance is bound to this sandbox and therefore shares its workspace
+    ''' and security policy.
     ''' 
     ''' This method is the registry: a new tool class only needs one more
     ''' entry here to become visible to the model.
@@ -126,12 +126,14 @@ Public Class Sandbox
         Dim finder As New Tools.GlobTool(Me)
         Dim editor As New Tools.EditTool(Me)
         Dim writer As New Tools.WriteTool(Me)
+        Dim runner As New Tools.ShellTool(Me)
 
         Call client.AddFunction(reader, "read")
         Call client.AddFunction(searcher, "grep")
         Call client.AddFunction(finder, "glob")
         Call client.AddFunction(editor, "edit")
         Call client.AddFunction(writer, "write")
+        Call client.AddFunction(runner, "shell")
 
         Return Me
     End Function
