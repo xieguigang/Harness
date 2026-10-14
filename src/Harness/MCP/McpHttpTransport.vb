@@ -34,8 +34,9 @@ Namespace MCP
             _http = New HttpClient() With {.Timeout = TimeSpan.FromSeconds(120)}
         End Sub
 
-        Public Async Function ConnectAsync(Optional cancellationToken As CancellationToken = Nothing) As Task Implements IMcpTransport.ConnectAsync
+        Public Function ConnectAsync(Optional cancellationToken As CancellationToken = Nothing) As Task Implements IMcpTransport.ConnectAsync
             ' the session is established on the first request (server replies Mcp-Session-Id)
+            Return Task.CompletedTask
         End Function
 
         Public Async Function SendAsync(message As JsonObject, Optional cancellationToken As CancellationToken = Nothing) As Task Implements IMcpTransport.SendAsync
@@ -83,9 +84,9 @@ Namespace MCP
             Using reader As New StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks:=True, bufferSize:=1024, leaveOpen:=True)
                 Dim data As New StringBuilder()
                 Dim line As String
-                While Not reader.EndOfStream
+                Do
                     line = Await reader.ReadLineAsync().ConfigureAwait(False)
-                    If line Is Nothing Then Exit While
+                    If line Is Nothing Then Exit Do
                     If line.StartsWith("data:") Then
                         data.Append(line.Substring(5).TrimStart())
                     ElseIf line = "" Then
@@ -103,16 +104,17 @@ Namespace MCP
                             End If
                         End If
                     End If
-                End While
+                Loop
             End Using
         End Function
 
-        Public Async Function CloseAsync() As Task Implements IMcpTransport.CloseAsync
+        Public Function CloseAsync() As Task Implements IMcpTransport.CloseAsync
             If Not _disposed Then
                 _http?.Dispose()
                 _http = Nothing
                 _disposed = True
             End If
+            Return Task.CompletedTask
         End Function
 
     End Class

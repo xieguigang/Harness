@@ -62,6 +62,7 @@ Namespace MCP
 
             _readerTask = Task.Run(AddressOf ReadLoop)
             _errTask = Task.Run(AddressOf ErrLoop)
+            Return Task.CompletedTask
         End Function
 
         Private Async Function ReadLoop() As Task
@@ -81,18 +82,22 @@ Namespace MCP
         ' drain stderr so a chatty server never blocks on a full pipe
         Private Async Function ErrLoop() As Task
             Try
-                While Not _process.StandardError.EndOfStream
-                    Dim line As String = Await _process.StandardError.ReadLineAsync().ConfigureAwait(False)
-                    If line Is Nothing Then Exit While
-                End While
+                Dim line As String
+                Do
+                    line = Await _process.StandardError.ReadLineAsync().ConfigureAwait(False)
+                    If line Is Nothing Then Exit Do
+                Loop
             Catch
             End Try
         End Function
 
         Public Async Function SendAsync(message As JsonObject, Optional cancellationToken As CancellationToken = Nothing) As Task Implements IMcpTransport.SendAsync
-            SyncLock _writeLock
+            Await _writeSem.WaitAsync().ConfigureAwait(False)
+            Try
                 Await JsonRpc.SendMessageAsync(_stdin, message).ConfigureAwait(False)
-            End SyncLock
+            Finally
+                _writeSem.Release()
+            End Try
         End Function
 
         Public Async Function CloseAsync() As Task Implements IMcpTransport.CloseAsync

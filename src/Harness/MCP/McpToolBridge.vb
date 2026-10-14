@@ -1,6 +1,7 @@
 Imports System.Collections.Generic
 Imports System.Text
 Imports System.Threading
+Imports Microsoft.VisualBasic.MIME.application.json
 Imports Microsoft.VisualBasic.MIME.application.json.Javascript
 Imports Ollama
 Imports Ollama.JSON.FunctionCall

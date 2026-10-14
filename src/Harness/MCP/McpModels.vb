@@ -1,3 +1,4 @@
+Imports System.Text
 Imports Microsoft.VisualBasic.MIME.application.json
 Imports Microsoft.VisualBasic.MIME.application.json.Javascript
 Imports jsobj = Microsoft.VisualBasic.MIME.application.json.Javascript.JsonObject
