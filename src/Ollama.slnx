@@ -21,14 +21,20 @@
       <Platform Solution="*|x64" Project="x64" />
     </Project>
   </Folder>
-  <Project Path="Ollama/Ollama.vbproj">
-    <Platform Solution="*|x64" Project="x64" />
-  </Project>
+  <Folder Name="/Harness/">
+    <Project Path="Harness/Harness.vbproj" Id="0b86dc2b-13d8-43e3-b581-b4e251440d30">
+      <BuildType Solution="Rsharp_app_release|*" Project="Release" />
+      <Platform Solution="Debug|x64" Project="x64" />
+    </Project>
+    <Project Path="Ollama/Ollama.vbproj">
+      <Platform Solution="*|x64" Project="x64" />
+    </Project>
+    <Project Path="WebView2UI/WebView2UI.vbproj" Id="7faa3449-8cf9-48d7-89c1-b6a4bc3e1449">
+      <BuildType Solution="Rsharp_app_release|*" Project="Release" />
+      <Platform Solution="Debug|x64" Project="x64" />
+    </Project>
+  </Folder>
   <Project Path="Ollama/test/test.vbproj" Id="939fa896-933a-44f2-9f75-75e8d86f1237">
-    <BuildType Solution="Rsharp_app_release|*" Project="Release" />
-    <Platform Solution="Debug|x64" Project="x64" />
-  </Project>
-  <Project Path="WebView2UI/WebView2UI.vbproj" Id="7faa3449-8cf9-48d7-89c1-b6a4bc3e1449">
     <BuildType Solution="Rsharp_app_release|*" Project="Release" />
     <Platform Solution="Debug|x64" Project="x64" />
   </Project>
