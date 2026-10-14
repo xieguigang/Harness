@@ -106,14 +106,49 @@ Public Class Sandbox
     ' ========================================================================
 
     ''' <summary>
+    ''' The tool registry: every entry binds one tool class to the name the
+    ''' model calls it by. This is the single place a tool has to be listed
+    ''' in, <see cref="RegisterTo"/> walks the table and instantiates each
+    ''' tool against this sandbox.
+    ''' </summary>
+    Private Shared ReadOnly ToolRegistry As (Name As String, Tool As Type)() = {
+        ("read", GetType(Tools.ReadTool)),
+        ("write", GetType(Tools.WriteTool)),
+        ("edit", GetType(Tools.EditTool)),
+        ("multi_edit", GetType(Tools.MultiEditTool)),
+        ("apply_patch", GetType(Tools.ApplyPatchTool)),
+        ("glob", GetType(Tools.GlobTool)),
+        ("grep", GetType(Tools.GrepTool)),
+        ("ls", GetType(Tools.LsTool)),
+        ("delete", GetType(Tools.DeleteTool)),
+        ("move", GetType(Tools.MoveTool)),
+        ("shell", GetType(Tools.ShellTool))
+    }
+
+    ''' <summary>
+    ''' The exported name of every tool this sandbox can register, in registry
+    ''' order.
+    ''' </summary>
+    Public ReadOnly Property ToolNames As String()
+        Get
+            Dim names(ToolRegistry.Length - 1) As String
+
+            For i As Integer = 0 To ToolRegistry.Length - 1
+                names(i) = ToolRegistry(i).Name
+            Next
+
+            Return names
+        End Get
+    End Property
+
+    ''' <summary>
     ''' Register every tool backed by this sandbox into an Ollama client, so
-    ''' that the model can call them by their exported names (currently
-    ''' "read", "grep", "glob", "edit", "write" and "shell"). Each tool
-    ''' instance is bound to this sandbox and therefore shares its workspace
-    ''' and security policy.
+    ''' that the model can call them by their exported names (see
+    ''' <see cref="ToolNames"/>). Each tool instance is bound to this sandbox
+    ''' and therefore shares its workspace and security policy.
     ''' 
-    ''' This method is the registry: a new tool class only needs one more
-    ''' entry here to become visible to the model.
+    ''' A new tool class only needs one more entry in
+    ''' <see cref="ToolRegistry"/> to become visible to the model.
     ''' </summary>
     ''' <param name="client">The client that should expose the tools.</param>
     Public Function RegisterTo(client As LLMClient) As Sandbox
@@ -121,22 +156,41 @@ Public Class Sandbox
             Throw New ArgumentNullException(NameOf(client))
         End If
 
-        Dim reader As New Tools.ReadTool(Me)
-        Dim searcher As New Tools.GrepTool(Me)
-        Dim finder As New Tools.GlobTool(Me)
-        Dim editor As New Tools.EditTool(Me)
-        Dim writer As New Tools.WriteTool(Me)
-        Dim runner As New Tools.ShellTool(Me)
+        ' AddFunction(Of T) looks the tool method up through GetType(T), i.e.
+        ' through the static type of its argument, so the generic helper below
+        ' is closed over the concrete tool type of every registry entry
+        ' instead of being called with an Object.
+        Dim factory As Reflection.MethodInfo = GetType(Sandbox).GetMethod(
+            NameOf(RegisterTool),
+            Reflection.BindingFlags.Instance Or Reflection.BindingFlags.NonPublic)
 
-        Call client.AddFunction(reader, "read")
-        Call client.AddFunction(searcher, "grep")
-        Call client.AddFunction(finder, "glob")
-        Call client.AddFunction(editor, "edit")
-        Call client.AddFunction(writer, "write")
-        Call client.AddFunction(runner, "shell")
+        For Each entry In ToolRegistry
+            Try
+                Call factory.MakeGenericMethod(entry.Tool).Invoke(Me, New Object() {client, entry.Name})
+            Catch ex As Reflection.TargetInvocationException
+                ' a broken tool definition must not be reported as a
+                ' reflection failure
+                Throw ex.InnerException
+            End Try
+        Next
 
         Return Me
     End Function
+
+    ''' <summary>
+    ''' Create one tool of the given type, bound to this sandbox, and register
+    ''' it with <paramref name="client"/> under <paramref name="name"/>. This
+    ''' is the generic half of the table driven registration.
+    ''' </summary>
+    ''' <typeparam name="T">The tool class, which must take a <see cref="Sandbox"/> constructor argument.</typeparam>
+    ''' <param name="client">The client that should expose the tool.</param>
+    ''' <param name="name">The name the model calls the tool by.</param>
+    Private Sub RegisterTool(Of T As Class)(client As LLMClient, name As String)
+        Dim instance As Object = Activator.CreateInstance(GetType(T), New Object() {Me})
+        Dim tool As T = DirectCast(instance, T)
+
+        Call client.AddFunction(tool, name)
+    End Sub
 
     ' ========================================================================
     ' Security
