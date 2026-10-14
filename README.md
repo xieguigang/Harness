@@ -1,4 +1,4 @@
-# Hidden-Markov-Model
+# A LLMs harness toolkit written in VisualBasic.NET language
 
 ###### Hidden-Markov-Model in VisualBasic.
 
