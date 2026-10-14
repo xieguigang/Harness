@@ -40,72 +40,118 @@ Namespace MCP
         End Function
 
         Public Async Function SendAsync(message As JsonObject, Optional cancellationToken As CancellationToken = Nothing) As Task Implements IMcpTransport.SendAsync
-            Dim json As String = message.BuildJsonString()
-            Dim content As New StringContent(json, Encoding.UTF8, "application/json")
+            ' when the message is a request, the sse stream is released as soon as the
+            ' matching response arrives: a streamable http server keeps the event stream
+            ' open, so waiting for eof would always run into the http timeout.
+            Dim expectId As String = Nothing
+            Dim idNode As JsonElement = message("id")
+            If idNode IsNot Nothing Then expectId = idNode.ToString()
 
-            Dim request As New HttpRequestMessage(HttpMethod.Post, _server.Url) With {.Content = content}
-            request.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream")
-            If Not String.IsNullOrEmpty(_sessionId) Then
-                request.Headers.TryAddWithoutValidation("Mcp-Session-Id", _sessionId)
-            End If
-            If Not String.IsNullOrEmpty(_server.BearerToken) Then
-                request.Headers.Authorization = New AuthenticationHeaderValue("Bearer", _server.BearerToken)
-            End If
-            If _server.Headers IsNot Nothing Then
-                For Each kv In _server.Headers
-                    request.Headers.TryAddWithoutValidation(kv.Key, kv.Value)
-                Next
-            End If
-
-            Dim response As HttpResponseMessage = Await _http.SendAsync(request, cancellationToken).ConfigureAwait(False)
-            If Not response.IsSuccessStatusCode Then
-                Dim body As String = If(response.Content IsNot Nothing, Await response.Content.ReadAsStringAsync().ConfigureAwait(False), "")
-                Throw New Exception($"MCP HTTP request failed ({(CInt(response.StatusCode))} {response.ReasonPhrase}): {body}")
-            End If
-
-            If response.Headers.Contains("Mcp-Session-Id") Then
-                _sessionId = response.Headers.GetValues("Mcp-Session-Id").FirstOrDefault()
-            End If
-
-            Dim mediaType As String = If(response.Content.Headers.ContentType?.MediaType, "")
-            If mediaType.Contains("text/event-stream") Then
-                Await ReadSseAsync(response.Content.ReadAsStream(), cancellationToken).ConfigureAwait(False)
-            Else
-                Dim txt As String = Await response.Content.ReadAsStringAsync().ConfigureAwait(False)
-                If Not String.IsNullOrWhiteSpace(txt) Then
-                    Dim node As JsonElement = JsonElement.ParseJSON(txt)
-                    Dim obj = TryCast(node, jsobj)
-                    If obj IsNot Nothing Then RaiseEvent MessageReceived(obj)
+            Using request As New HttpRequestMessage(HttpMethod.Post, _server.Url)
+                request.Content = New StringContent(message.BuildJsonString(), Encoding.UTF8, "application/json")
+                request.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream")
+                If Not String.IsNullOrEmpty(_sessionId) Then
+                    request.Headers.TryAddWithoutValidation("Mcp-Session-Id", _sessionId)
                 End If
-            End If
+                If Not String.IsNullOrEmpty(_server.BearerToken) Then
+                    request.Headers.Authorization = New AuthenticationHeaderValue("Bearer", _server.BearerToken)
+                End If
+                If _server.Headers IsNot Nothing Then
+                    For Each kv In _server.Headers
+                        request.Headers.TryAddWithoutValidation(kv.Key, kv.Value)
+                    Next
+                End If
+
+                Using response As HttpResponseMessage = Await _http.SendAsync(request, cancellationToken).ConfigureAwait(False)
+                    If Not response.IsSuccessStatusCode Then
+                        Dim body As String = If(response.Content IsNot Nothing, Await response.Content.ReadAsStringAsync().ConfigureAwait(False), "")
+                        Throw New Exception($"MCP HTTP request failed ({(CInt(response.StatusCode))} {response.ReasonPhrase}): {body}")
+                    End If
+
+                    If response.Headers.Contains("Mcp-Session-Id") Then
+                        _sessionId = response.Headers.GetValues("Mcp-Session-Id").FirstOrDefault()
+                    End If
+
+                    Dim mediaType As String = If(response.Content.Headers.ContentType?.MediaType, "")
+
+                    If mediaType.Contains("text/event-stream") Then
+                        Await ReadSseAsync(response.Content.ReadAsStream(), expectId, cancellationToken).ConfigureAwait(False)
+                    Else
+                        RaiseMessage(Await response.Content.ReadAsStringAsync().ConfigureAwait(False))
+                    End If
+                End Using
+            End Using
         End Function
 
-        Private Async Function ReadSseAsync(stream As Stream, ct As CancellationToken) As Task
+        Private Sub RaiseMessage(text As String)
+            If String.IsNullOrWhiteSpace(text) Then Return
+
+            Try
+                Dim obj As JsonObject = TryCast(JsonElement.ParseJSON(text), jsobj)
+                If obj IsNot Nothing Then RaiseEvent MessageReceived(obj)
+            Catch ex As Exception
+                Console.Error.WriteLine("[MCP http] response parse error: " & ex.Message)
+            End Try
+        End Sub
+
+        Private Async Function ReadSseAsync(stream As Stream, expectId As String, ct As CancellationToken) As Task
             Using reader As New StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks:=True, bufferSize:=1024, leaveOpen:=True)
                 Dim data As New StringBuilder()
                 Dim line As String
+
                 Do
                     line = Await reader.ReadLineAsync().ConfigureAwait(False)
-                    If line Is Nothing Then Exit Do
-                    If line.StartsWith("data:") Then
-                        data.Append(line.Substring(5).TrimStart())
-                    ElseIf line = "" Then
+
+                    If line Is Nothing Then
+                        Exit Do
+                    ElseIf line.Length = 0 Then
                         If data.Length > 0 Then
                             Dim txt As String = data.ToString()
                             data.Clear()
+
                             If txt <> "[DONE]" Then
-                                Try
-                                    Dim node As JsonElement = JsonElement.ParseJSON(txt)
-                                    Dim obj = TryCast(node, jsobj)
-                                    If obj IsNot Nothing Then RaiseEvent MessageReceived(obj)
-                                Catch ex As Exception
-                                    Console.Error.WriteLine("[MCP http] sse parse error: " & ex.Message)
-                                End Try
+                                ' the awaited response arrived: release the stream
+                                If EmitSseMessage(txt, expectId) Then Return
                             End If
                         End If
+                    ElseIf line.StartsWith("data:") Then
+                        If data.Length > 0 Then data.Append(vbLf)
+                        data.Append(line.Substring(5).TrimStart())
                     End If
                 Loop
+
+                ' an event not terminated by a blank line
+                If data.Length > 0 AndAlso data.ToString() <> "[DONE]" Then
+                    EmitSseMessage(data.ToString(), expectId)
+                End If
             End Using
+        End Function
+
+        ''' <summary>
+        ''' raise one sse payload through <see cref="MessageReceived"/>. returns true when
+        ''' the payload is the response the caller waits for (so the stream can be released).
+        ''' </summary>
+        Private Function EmitSseMessage(text As String, expectId As String) As Boolean
+            Dim obj As JsonObject
+
+            Try
+                obj = TryCast(JsonElement.ParseJSON(text), jsobj)
+            Catch ex As Exception
+                Console.Error.WriteLine("[MCP http] sse parse error: " & ex.Message)
+                Return False
+            End Try
+
+            If obj Is Nothing Then Return False
+
+            RaiseEvent MessageReceived(obj)
+
+            ' a server initiated message carries a method and is never the awaited response
+            If expectId Is Nothing OrElse Not String.IsNullOrEmpty(obj.Str("method")) Then
+                Return False
+            End If
+
+            Dim idNode As JsonElement = obj("id")
+            Return idNode IsNot Nothing AndAlso idNode.ToString() = expectId
         End Function
 
         Public Function CloseAsync() As Task Implements IMcpTransport.CloseAsync

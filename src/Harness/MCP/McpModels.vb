@@ -106,10 +106,33 @@ Namespace MCP
             }
         End Function
 
+        ''' <summary>
+        ''' the readable text of this content block. text blocks return their text;
+        ''' every other block kind returns a readable placeholder instead of an empty
+        ''' string, so the payload of a tool call is never silently lost.
+        ''' </summary>
         Public Function ToText() As String
             If Not String.IsNullOrEmpty(Text) Then Return Text
-            If Not String.IsNullOrEmpty(Data) Then Return $"[{Type}] {Uri} ({MimeType}, {Data.Length} chars of base64)"
-            Return ""
+
+            Select Case If(Type, "").ToLower()
+                Case "resource_link"
+                    Dim name As String = JsonRpc.Str(Raw, "name")
+                    Dim desc As String = JsonRpc.Str(Raw, "description")
+                    Dim s As String = $"[resource link] {If(String.IsNullOrEmpty(name), Uri, name)}: {Uri}"
+                    If Not String.IsNullOrEmpty(desc) Then s &= " (" & desc & ")"
+                    Return s
+                Case "resource"
+                    Dim embedded As String = JsonRpc.Str(Raw, "resource", "text")
+                    If Not String.IsNullOrEmpty(embedded) Then Return embedded
+                    Return $"[embedded resource] {JsonRpc.Str(Raw, "resource", "uri")} ({JsonRpc.Str(Raw, "resource", "mimeType")})"
+                Case "image", "audio"
+                    Return $"[{Type}] {MimeType} ({If(Data, "").Length} chars of base64)"
+                Case Else
+                    If Not String.IsNullOrEmpty(Data) Then
+                        Return $"[{Type}] {Uri} ({MimeType}, {Data.Length} chars of base64)"
+                    End If
+                    Return $"[{If(String.IsNullOrEmpty(Type), "content", Type)}]"
+            End Select
         End Function
     End Class
 
@@ -134,12 +157,23 @@ Namespace MCP
             Return r
         End Function
 
+        ''' <summary>
+        ''' readable rendering of the whole result: the text blocks in order, followed
+        ''' by the structured content (which used to be dropped completely).
+        ''' </summary>
         Public Function ToText() As String
-            If Content Is Nothing OrElse Content.Count = 0 Then Return ""
-            Dim lines As New List(Of String)
-            For Each c In Content
-                lines.Add(c.ToText())
-            Next
+            Dim lines As New List(Of String)()
+
+            If Content IsNot Nothing Then
+                For Each c In Content
+                    lines.Add(c.ToText())
+                Next
+            End If
+
+            If StructuredContent IsNot Nothing Then
+                lines.Add(StructuredContent.BuildJsonString)
+            End If
+
             Return String.Join(vbCrLf, lines)
         End Function
     End Class

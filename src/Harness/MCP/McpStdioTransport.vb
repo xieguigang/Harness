@@ -9,11 +9,14 @@ Namespace MCP
 
     ''' <summary>
     ''' stdio transport: launches the MCP server as a child process and exchanges
-    ''' length-framed json-rpc messages over its stdin/stdout, reusing the shared
-    ''' <see cref="JsonRpc"/> framing from the base json library (the stream is not a
-    ''' network socket, just a process pipe — which is exactly why the framing was
-    ''' generalized from NetworkStream to Stream).
+    ''' newline delimited json-rpc messages over its stdin/stdout (one complete
+    ''' message per line, see <see cref="McpLineFraming"/>).
     ''' </summary>
+    ''' <remarks>
+    ''' MCP over stdio is *not* the LSP Content-Length framing: every message is a
+    ''' single utf8 line. reusing the base library framing here would leave the
+    ''' handshake stuck waiting for a header block that never arrives.
+    ''' </remarks>
     Public Class McpStdioTransport : Implements IMcpTransport
 
         Private ReadOnly _server As McpStdioServer
@@ -56,7 +59,16 @@ Namespace MCP
                 Next
             End If
 
-            _process = Process.Start(psi)
+            Try
+                _process = Process.Start(psi)
+            Catch ex As Exception
+                Throw New InvalidOperationException($"unable to start the mcp server '{_server.Name}' ({_server.Command}): {ex.Message}", ex)
+            End Try
+
+            If _process Is Nothing Then
+                Throw New InvalidOperationException($"unable to start the mcp server '{_server.Name}' ({_server.Command}).")
+            End If
+
             _stdout = _process.StandardOutput.BaseStream
             _stdin = _process.StandardInput.BaseStream
 
@@ -68,7 +80,7 @@ Namespace MCP
         Private Async Function ReadLoop() As Task
             Try
                 While Not _cts.IsCancellationRequested
-                    Dim msg As jsobj = Await JsonRpc.ReadMessageAsync(_stdout).ConfigureAwait(False)
+                    Dim msg As JsonObject = Await McpLineFraming.ReadMessageAsync(_stdout).ConfigureAwait(False)
                     If msg Is Nothing Then Exit While
                     RaiseEvent MessageReceived(msg)
                 End While
@@ -94,7 +106,7 @@ Namespace MCP
         Public Async Function SendAsync(message As JsonObject, Optional cancellationToken As CancellationToken = Nothing) As Task Implements IMcpTransport.SendAsync
             Await _writeSem.WaitAsync().ConfigureAwait(False)
             Try
-                Await JsonRpc.SendMessageAsync(_stdin, message).ConfigureAwait(False)
+                Await McpLineFraming.WriteMessageAsync(_stdin, message).ConfigureAwait(False)
             Finally
                 _writeSem.Release()
             End Try
@@ -103,16 +115,26 @@ Namespace MCP
         Public Async Function CloseAsync() As Task Implements IMcpTransport.CloseAsync
             Try
                 _cts?.Cancel()
+
+                ' closing stdin signals eof: the polite shutdown request of a stdio server
                 Try
                     _stdin?.Close()
                 Catch
                 End Try
+
                 If _process IsNot Nothing AndAlso Not _process.HasExited Then
-                    _process.CloseMainWindow()
-                    If Not _process.WaitForExit(2000) Then
-                        Try : _process.Kill() : Catch : End Try
+                    Dim exited As Boolean = Await Task.Run(Of Boolean)(Function() _process.WaitForExit(2000)).ConfigureAwait(False)
+                    If Not exited Then
+                        ' a wrapper such as uv/python may leave grand children behind,
+                        ' so the whole process tree has to go
+                        Try
+                            _process.Kill(entireProcessTree:=True)
+                        Catch ex As Exception
+                            Console.Error.WriteLine("[MCP stdio] kill error: " & ex.Message)
+                        End Try
                     End If
                 End If
+
                 If _readerTask IsNot Nothing Then Await _readerTask.ConfigureAwait(False)
                 If _errTask IsNot Nothing Then Await _errTask.ConfigureAwait(False)
             Catch ex As Exception

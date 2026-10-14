@@ -21,7 +21,8 @@ Namespace MCP
 
     ''' <summary>
     ''' a local MCP server launched as a child process; communication happens over its
-    ''' stdin/stdout using the length-framed json-rpc protocol.
+    ''' stdin/stdout using newline delimited json-rpc messages (one complete message
+    ''' per line, <b>not</b> the LSP Content-Length framing).
     ''' </summary>
     Public Class McpStdioServer : Inherits McpServerDescriptor
         Public Property Command As String
