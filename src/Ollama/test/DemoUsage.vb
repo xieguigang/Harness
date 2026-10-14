@@ -13,7 +13,7 @@
 ' ============================================================================
 
 Imports System.IO
-Imports Harness
+Imports Harness.SkillSystem
 Imports Ollama
 
 Public Class DemoUsage
@@ -62,7 +62,7 @@ Public Class DemoUsage
         '    actually loading their content into the LLM context.
         Console.WriteLine("--- Layer 3: Resource Catalog (not loaded into context) ---")
         Dim resources = agent.Manager.EnumerateResources("pdf_extract_text")
-        For Each r In resources
+        For Each r As SkillResource In resources
             Console.WriteLine($"  [{r.Kind}] {r.RelativePath} ({r.SizeBytes} bytes)")
         Next
         Console.WriteLine()

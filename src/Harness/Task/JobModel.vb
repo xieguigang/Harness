@@ -1,5 +1,3 @@
-Imports System
-
 Namespace Tools
 
     ''' <summary>
