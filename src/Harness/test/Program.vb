@@ -1,4 +1,6 @@
 Imports System.Linq
+Imports Microsoft.VisualBasic.ComponentModel.Settings.Inf
+Imports Ollama
 
 Namespace HarnessSelfTest
 
@@ -9,6 +11,16 @@ Namespace HarnessSelfTest
     ''' <see cref="McpStubServer"/>).
     ''' </summary>
     Friend Module Program
+
+        ReadOnly apikey As String
+
+        Sub New()
+            apikey = INIProfile.GetPrivateProfileString("LLMs", "apiKey", "C:\Users\Administrator\AppData\Local\OmicsWorks\omics-works-config.ini")
+        End Sub
+
+        Public Function GetLLMs() As LLMClient
+            Return New LLMClient(New OpenAIProvider("https://api.deepseek.com", apikey), "deepseek-flash")
+        End Function
 
         Function Main(args As String()) As Integer
             If args IsNot Nothing AndAlso args.Length > 0 Then
