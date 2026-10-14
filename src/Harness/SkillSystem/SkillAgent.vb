@@ -1,5 +1,6 @@
 Imports System.Text
 Imports Microsoft.VisualBasic.MIME.application.json
+Imports Ollama
 Imports Ollama.JSON.FunctionCall
 
 ''' <summary>

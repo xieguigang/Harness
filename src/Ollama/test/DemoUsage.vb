@@ -13,7 +13,7 @@
 ' ============================================================================
 
 Imports System.IO
-Imports System.Threading.Tasks
+Imports Harness
 Imports Ollama
 
 Public Class DemoUsage
