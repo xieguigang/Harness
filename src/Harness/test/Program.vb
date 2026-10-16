@@ -39,6 +39,8 @@ Namespace HarnessSelfTest
                         ' the async test is awaited synchronously: a console application
                         ' has no SynchronizationContext, so this cannot deadlock
                         Return NaturePolishingSelfTest.RunAsync(args.Skip(1).ToArray()).GetAwaiter().GetResult()
+                    Case "--toollog"
+                        Return ToolLogSelfTest.RunAll()
                     Case "--help", "-h"
                         PrintUsage()
                         Return 0
@@ -48,17 +50,21 @@ Namespace HarnessSelfTest
             Dim mcpExit As Integer = McpSelfTest.RunAll()
             Dim skillExit As Integer = SkillSelfTest.RunAll()
             Dim askExit As Integer = AskUserQuestionSelfTest.RunAll()
+            Dim logExit As Integer = ToolLogSelfTest.RunAll()
 
             Console.WriteLine()
-            Console.WriteLine($"HarnessSelfTest finished: mcp={(If(mcpExit = 0, "ok", "failed"))}, skills={(If(skillExit = 0, "ok", "failed"))}, ask={(If(askExit = 0, "ok", "failed"))}")
+            Console.WriteLine($"HarnessSelfTest finished: mcp={(If(mcpExit = 0, "ok", "failed"))}, skills={(If(skillExit = 0, "ok", "failed"))}, ask={(If(askExit = 0, "ok", "failed"))}, toollog={(If(logExit = 0, "ok", "failed"))}")
 
-            Return If(mcpExit = 0 AndAlso skillExit = 0 AndAlso askExit = 0, 0, 1)
+            Return If(mcpExit = 0 AndAlso skillExit = 0 AndAlso askExit = 0 AndAlso logExit = 0, 0, 1)
         End Function
 
         Private Sub PrintUsage()
             Console.WriteLine("HarnessSelfTest - harness self test (mcp client, skill system, ask_user_question)")
             Console.WriteLine()
-            Console.WriteLine("  HarnessSelfTest                    run the offline self tests (mcp, skills, ask_user_question)")
+            Console.WriteLine("  HarnessSelfTest                    run the offline self tests (mcp, skills, ask_user_question, tool log)")
+            Console.WriteLine("  HarnessSelfTest --toollog          run only the structured tool call log self test")
+            Console.WriteLine("set HARNESS_KEEP_TOOLLOG=1 together with --toollog to keep the log folders")
+            Console.WriteLine("the test wrote, so they can be reviewed by hand")
             Console.WriteLine("  HarnessSelfTest --polish           run the real nature-polishing skill end to end test")
             Console.WriteLine("  HarnessSelfTest --stub-mcp-server  act as the stub mcp server on stdio")
             Console.WriteLine()

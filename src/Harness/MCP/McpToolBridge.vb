@@ -68,6 +68,14 @@ Namespace MCP
         Private ReadOnly _failures As New List(Of String)
         Private ReadOnly _registrations As New List(Of McpRegisteredPrimitive)
 
+        ''' <summary>
+        ''' the tool call log the primitives of this bridge should be recorded
+        ''' in. <see cref="Sandbox.RegisterMcpServers"/> sets it to the log of
+        ''' the session before <see cref="Attach"/> runs; Nothing keeps the
+        ''' bridge unlogged.
+        ''' </summary>
+        Public Property ToolLog As Logging.ToolCallLogger
+
         Public Sub New(ParamArray servers As McpServerDescriptor())
             _servers = If(servers Is Nothing, New McpServerDescriptor() {}, servers)
         End Sub
@@ -182,7 +190,19 @@ Namespace MCP
                 used.Add(unique)
 
                 c.Model.name = unique
-                client.AddFunction(c.Model, c.Invoke)
+
+                ' every mcp primitive reaches the model through the same
+                ' registry as the local tools, so it is wrapped by the same
+                ' log: the record then carries the server, the kind and the
+                ' original name next to the call itself
+                Dim backend As Func(Of FunctionCall, String) = c.Invoke
+
+                If ToolLog IsNot Nothing Then
+                    backend = ToolLog.Wrap(c.Model, Logging.ToolLogText.SourceMcp, backend,
+                                           kind:=c.Kind, server:=c.ServerName, originalName:=c.OriginalName)
+                End If
+
+                client.AddFunction(c.Model, backend)
 
                 _registrations.Add(New McpRegisteredPrimitive With {
                     .RegisteredName = unique,

@@ -1,5 +1,6 @@
 Imports System.Runtime.ExceptionServices
 Imports Ollama
+Imports Ollama.JSON.FunctionCall
 
 ''' <summary>
 ''' Sandbox - the <see cref="SecurityPolicy"/> gated filesystem backend that
@@ -53,6 +54,19 @@ Public Class Sandbox
     Private wsMcp As MCP.McpToolBridge
 
     ''' <summary>
+    ''' The structured tool call log of this session. Every tool registered
+    ''' through this sandbox - the local ones, the mcp primitives and the two
+    ''' skill tools - runs through a logging wrapper installed by
+    ''' <see cref="RegisterTool(Of T)"/>, so the log sees each call with its
+    ''' arguments, its result and the time it took.
+    ''' 
+    ''' The log lives in <c>&lt;workspace&gt;\.harness\toolcalls\&lt;session&gt;\</c>
+    ''' and is written as json arrays. A workspace that cannot be written to
+    ''' degrades it to an in memory log; a tool call never fails because of it.
+    ''' </summary>
+    Private ReadOnly wsLog As Logging.ToolCallLogger
+
+    ''' <summary>
     ''' Raised when a write or execute operation needs the user's consent.
     ''' Set <see cref="PermissionEventArg.PermissionGranted"/> to True inside
     ''' the handler to let the operation proceed.
@@ -93,6 +107,7 @@ Public Class Sandbox
 
         wsRoot = root
         wsSecurity = security
+        wsLog = New Logging.ToolCallLogger(root, securityPolicy:=security.ToString())
     End Sub
 
     ''' <summary>
@@ -123,6 +138,65 @@ Public Class Sandbox
             Return wsJobs.Value
         End Get
     End Property
+
+    ' ========================================================================
+    ' Tool call log
+    ' ========================================================================
+
+    ''' <summary>
+    ''' The structured log of every tool call of this session. It writes
+    ''' <c>tool-calls.json</c>, <c>tools.json</c>, <c>permissions.json</c> and
+    ''' <c>session.json</c> into
+    ''' <c>&lt;workspace&gt;\<see cref="ArtifactFolder"/>\toolcalls\&lt;session&gt;\</c>.
+    ''' 
+    ''' A host may retune it before the first call (<see cref="Logging.ToolLogOptions"/>)
+    ''' and should call <see cref="CloseToolLog"/> when the session ends, which
+    ''' is what finishes <c>session.json</c>.
+    ''' </summary>
+    Public ReadOnly Property ToolLog As Logging.ToolCallLogger
+        Get
+            Return wsLog
+        End Get
+    End Property
+
+    ''' <summary>
+    ''' False switches the tool call log off; the tools then run exactly as
+    ''' they did before the log existed. On by default.
+    ''' 
+    ''' The switch is read while the tools are registered: set it before
+    ''' <see cref="RegisterTo"/> if a session should stay unlogged.
+    ''' </summary>
+    Public Property ToolLogEnabled As Boolean
+        Get
+            Return wsLog.Enabled
+        End Get
+        Set(value As Boolean)
+            wsLog.Enabled = value
+        End Set
+    End Property
+
+    ''' <summary>
+    ''' Optional host hook called at the beginning of every tool call, so that
+    ''' each record can say what the host was doing - the task it is working
+    ''' on and the llm round the call belongs to.
+    ''' </summary>
+    Public Property ToolLogContextProvider As Func(Of Logging.ToolCallContext)
+        Get
+            Return wsLog.ContextProvider
+        End Get
+        Set(value As Func(Of Logging.ToolCallContext))
+            wsLog.ContextProvider = value
+        End Set
+    End Property
+
+    ''' <summary>
+    ''' Finish the tool call log: write <c>session.json</c> and release the
+    ''' file handles. The records stay on disk; the host may keep using the
+    ''' sandbox afterwards, though nothing is logged any more.
+    ''' </summary>
+    Public Sub CloseToolLog()
+        Call wsLog.Close()
+    End Sub
 
     ' ========================================================================
     ' Tool registration
@@ -229,7 +303,53 @@ Public Class Sandbox
         Dim instance As Object = Activator.CreateInstance(GetType(T), New Object() {Me})
         Dim tool As T = DirectCast(instance, T)
 
+        ' The logging wrapper needs the backend delegate of the tool, and the
+        ' ollama helper that builds it (CLRFunction) is internal to that
+        ' project - which this one leaves untouched. So the registration runs
+        ' in two steps:
+        '
+        '   1. the original AddFunction(Of T) runs unchanged: ollama builds
+        '      the schema of the tool, appends it to client.tools and
+        '      registers its own backend under the name of the tool.
+        '   2. for every schema that step appended the backend is rebuilt by
+        '      ToolBackend, wrapped by wsLog and registered again under the
+        '      same name, which replaces the backend of step 1. The schema
+        '      the second registration appended duplicates the first one and
+        '      is dropped again, so the model still sees every tool exactly
+        '      once and with exactly the schema ollama built for it.
+        Dim targets As Reflection.MethodInfo() = Logging.ToolBackend.GetTargets(GetType(T), name)
+        Dim before As Integer = If(client.tools Is Nothing, 0, client.tools.Count)
+
         Call client.AddFunction(tool, name)
+
+        If client.tools Is Nothing OrElse Not wsLog.Enabled Then
+            Return
+        End If
+
+        Dim added As Integer = client.tools.Count - before
+
+        For k As Integer = added - 1 To 0 Step -1
+            Dim meta As FunctionModel = client.tools(before + k).function
+
+            If meta Is Nothing Then
+                Continue For
+            End If
+
+            Dim handle As Reflection.MethodInfo = If(k < targets.Length, targets(k), Nothing)
+
+            If handle Is Nothing Then
+                Continue For
+            End If
+
+            Dim backend As Func(Of FunctionCall, String) = Logging.ToolBackend.CreateCaller(tool, handle)
+            Dim logged As Func(Of FunctionCall, String) = wsLog.Wrap(
+                meta, Logging.ToolLogText.SourceSandbox, backend, originalName:=name)
+
+            Call client.AddFunction(meta, logged)
+
+            ' drop the duplicate schema the second registration appended
+            Call client.tools.RemoveAt(client.tools.Count - 1)
+        Next
     End Sub
 
     ' ========================================================================
@@ -279,6 +399,10 @@ Public Class Sandbox
         End If
 
         Dim bridge As New MCP.McpToolBridge(servers)
+
+        ' the bridge registers its own primitives, so it needs the same log
+        ' to wrap them with
+        bridge.ToolLog = wsLog
 
         Try
             ' the bridge awaits with ConfigureAwait(False) throughout, so a
@@ -333,6 +457,8 @@ Public Class Sandbox
 
             Case SecurityPolicy.[Readonly]
                 If Not insideWorkspace Then
+                    Call wsLog.LogPermission(operation.ToString(), target, Nothing, Nothing, False,
+                                             "the 'Readonly' policy does not permit escaping the workspace", insideWorkspace)
                     Return $"Error: '{target}' is outside the sandbox workspace '{wsRoot}', and the 'Readonly' security policy does not permit escaping it."
                 End If
 
@@ -340,6 +466,8 @@ Public Class Sandbox
                     Return Nothing
                 End If
 
+                Call wsLog.LogPermission(operation.ToString(), target, Nothing, Nothing, False,
+                                         "the 'Readonly' policy only permits reading", insideWorkspace)
                 Return $"Error: security policy 'Readonly' only permits reading, but '{operation}' was requested on '{target}'."
 
             Case Else
@@ -364,7 +492,14 @@ Public Class Sandbox
 
         RaiseEvent RequestPermission(Me, e)
 
-        If e.PermissionGranted Then
+        Dim granted As Boolean = e.PermissionGranted
+
+        Call wsLog.LogPermission(operation.ToString(), target, Nothing, Nothing, granted,
+                                 If(granted, "the host granted the request under the 'AskPermission' policy",
+                                    "the host denied the request under the 'AskPermission' policy"),
+                                 IsInsideWorkspace(target))
+
+        If granted Then
             Return Nothing
         End If
 
@@ -421,6 +556,8 @@ Public Class Sandbox
                                         justification As String) As String
 
         If String.IsNullOrWhiteSpace(justification) Then
+            Call wsLog.LogPermission(operation.ToString(), target, permission, justification, False,
+                                     "the escalation carried no justification", IsInsideWorkspace(target))
             Return "Error: 'justification' is required together with 'sandbox_permissions'."
         End If
 
@@ -430,15 +567,21 @@ Public Class Sandbox
         Select Case mode
             Case PermissionWorkspaceWrite
                 If Not inside Then
+                    Call wsLog.LogPermission(operation.ToString(), target, mode, justification, False,
+                                             "'workspace-write' does not cover a target outside the workspace", inside)
                     Return $"Error: '{PermissionWorkspaceWrite}' only covers targets inside the sandbox workspace, but '{target}' is outside it. Use '{PermissionDangerFullAccess}'."
                 End If
 
             Case PermissionDangerFullAccess
                 If inside Then
+                    Call wsLog.LogPermission(operation.ToString(), target, mode, justification, False,
+                                             "'workspace-write' is the narrowest sufficient mode for a target inside the workspace", inside)
                     Return $"Error: '{target}' is inside the sandbox workspace, so '{PermissionWorkspaceWrite}' is the narrowest sufficient sandbox mode."
                 End If
 
             Case Else
+                Call wsLog.LogPermission(operation.ToString(), target, permission, justification, False,
+                                         "unknown sandbox_permissions mode", inside)
                 Return $"Error: unknown sandbox_permissions '{permission}'. Expected '{PermissionWorkspaceWrite}' or '{PermissionDangerFullAccess}'."
         End Select
 
@@ -451,7 +594,14 @@ Public Class Sandbox
 
         RaiseEvent RequestPermission(Me, e)
 
-        If e.PermissionGranted Then
+        Dim granted As Boolean = e.PermissionGranted
+
+        Call wsLog.LogPermission(operation.ToString(), target, mode, justification, granted,
+                                 If(granted, $"the host granted the one-shot '{mode}' escalation",
+                                    $"the host denied the one-shot '{mode}' escalation"),
+                                 inside)
+
+        If granted Then
             Return Nothing
         End If
 

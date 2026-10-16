@@ -29,6 +29,7 @@ Namespace SkillSystem
         Private ReadOnly _ollama As LLMClient
         Private ReadOnly _manager As SkillManager
         Private ReadOnly _toolRegistered As Boolean = False
+        Private ReadOnly _toolLog As Logging.ToolCallLogger
 
         ''' <summary>
         ''' Create a new SkillAgent. The constructor performs Layer 1
@@ -37,12 +38,18 @@ Namespace SkillSystem
         ''' </summary>
         ''' <param name="ollama">A configured unified LLM client instance (e.g. LLMClient + OllamaProvider).</param>
         ''' <param name="skillsBaseDir">Absolute path to the skills root folder.</param>
-        Public Sub New(ollama As LLMClient, skillsBaseDir As String)
+        ''' <param name="toolLog">
+        ''' The tool call log the two skill tools should be recorded in. The tools are
+        ''' registered inside this constructor, so the log has to be handed in here -
+        ''' passing Nothing leaves them unlogged.
+        ''' </param>
+        Public Sub New(ollama As LLMClient, skillsBaseDir As String, Optional toolLog As Logging.ToolCallLogger = Nothing)
             If ollama Is Nothing Then
                 Throw New ArgumentNullException(NameOf(ollama))
             End If
             _ollama = ollama
             _manager = New SkillManager(skillsBaseDir)
+            _toolLog = toolLog
 
             ' Layer 1: scan all installed skills and cache their metadata
             Dim count As Integer = _manager.ScanSkills()
@@ -269,8 +276,9 @@ Namespace SkillSystem
             p1, p2, p3)
 
             ' Register with the Ollama client. The lambda is the CLR backend
-            ' that actually runs when the LLM invokes this tool.
-            Call _ollama.AddFunction(funcModel, f:=AddressOf ScriptExecution)
+            ' that actually runs when the LLM invokes this tool; it is wrapped
+            ' by the session log when the host handed one in.
+            Call _ollama.AddFunction(funcModel, f:=Wrap(funcModel, "execute_skill_script", AddressOf ScriptExecution))
         End Sub
 
         ''' <summary>
@@ -297,8 +305,26 @@ Namespace SkillSystem
             "Returns the file content as a string.",
             p1, p2)
 
-            Call _ollama.AddFunction(funcModel, f:=AddressOf SkillFileRead)
+            Call _ollama.AddFunction(funcModel, f:=Wrap(funcModel, "read_skill_file", AddressOf SkillFileRead))
         End Sub
+
+        ''' <summary>
+        ''' hand the backend of one skill tool to the session log and get back
+        ''' the delegate that should be registered in its place. without a log
+        ''' the backend is returned untouched, so the behaviour of the agent
+        ''' does not change.
+        ''' </summary>
+        Private Function Wrap(model As FunctionModel,
+                              toolName As String,
+                              backend As Func(Of FunctionCall, String)) As Func(Of FunctionCall, String)
+
+            If _toolLog Is Nothing Then
+                Return backend
+            End If
+
+            Return _toolLog.Wrap(model, Logging.ToolLogText.SourceSkill, backend,
+                                 server:=_manager.SkillsBaseDirectory, originalName:=toolName)
+        End Function
 
         Private Function SkillFileRead([call] As FunctionCall) As String
             Dim skillName As String = [call]!skill_name?.ToString()

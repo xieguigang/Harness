@@ -327,18 +327,19 @@ Public Class OpenAIProvider : Implements ILLMProvider
         End Try
     End Function
 
-    Private Function ConvertToOpenAIMessages(messages As List(Of ChatMessage)) As List(Of Dictionary(Of String, Object))
-        Dim list As New List(Of Dictionary(Of String, Object))
-        If messages Is Nothing Then Return list
+    Private Iterator Function ConvertToOpenAIMessages(messages As List(Of ChatMessage)) As IEnumerable(Of Dictionary(Of String, Object))
+        If messages Is Nothing Then
+            Return
+        End If
 
-        For Each m In messages
-            If m Is Nothing Then Continue For
-
+        For Each m As ChatMessage In From mi As ChatMessage In messages Where Not mi Is Nothing
             If Not m.ToolCalls.IsNullOrEmpty Then
                 ' assistant 消息，带有 tool_calls（历史中的工具调用）
                 Dim tcs As New List(Of Dictionary(Of String, Object))
-                For Each tc In m.ToolCalls
+
+                For Each tc As ToolCallInfo In m.ToolCalls
                     Dim argsJson As String = If(tc.FunctionArguments.IsNullOrEmpty, "{}", tc.FunctionArguments.GetJson(simpleDict:=True))
+
                     tcs.Add(New Dictionary(Of String, Object) From {
                         {"id", If(String.IsNullOrEmpty(tc.Id), Guid.NewGuid().ToString("N"), tc.Id)},
                         {"type", "function"},
@@ -348,25 +349,25 @@ Public Class OpenAIProvider : Implements ILLMProvider
                         }}
                     })
                 Next
-                list.Add(New Dictionary(Of String, Object) From {
+
+                Yield New Dictionary(Of String, Object) From {
                     {"role", "assistant"},
                     {"content", If(m.Content, "")},
                     {"tool_calls", tcs}
-                })
+                }
             ElseIf m.Role = "tool" Then
-                list.Add(New Dictionary(Of String, Object) From {
+                Yield New Dictionary(Of String, Object) From {
                     {"role", "tool"},
                     {"tool_call_id", m.ToolCallId},
                     {"content", m.Content}
-                })
+                }
             Else
-                list.Add(New Dictionary(Of String, Object) From {
+                Yield New Dictionary(Of String, Object) From {
                     {"role", m.Role},
                     {"content", m.Content}
-                })
+                }
             End If
         Next
-        Return list
     End Function
 
     Private Function ConvertToOpenAITools(tools As List(Of FunctionTool)) As List(Of Dictionary(Of String, Object))
