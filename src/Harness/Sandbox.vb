@@ -59,6 +59,24 @@ Public Class Sandbox
     ''' </summary>
     Public Event RequestPermission(sender As Object, e As PermissionEventArg)
 
+    ''' <summary>
+    ''' Raised when the model asks the user a question through the
+    ''' "ask_user_question" tool. The handler shows
+    ''' <see cref="Tools.QuestionEventArg.Questions"/> to the user and
+    ''' answers through the event argument: call
+    ''' <see cref="Tools.QuestionEventArg.Reply"/> - with the response of
+    ''' every question, keyed by its id - or
+    ''' <see cref="Tools.QuestionEventArg.Decline"/> once the user decided.
+    '''
+    ''' A handler may answer before it returns, and the tool call then
+    ''' continues at once; it may also return immediately and answer later
+    ''' from any thread, which is what keeps a "timed" ask_user_question
+    ''' call pending while the question remains answerable. A host that
+    ''' does not subscribe leaves every question unanswered, and the tool
+    ''' reports that instead of waiting forever.
+    ''' </summary>
+    Public Event AskUser(sender As Object, e As Tools.QuestionEventArg)
+
     Sub New(workspace As String, Optional security As SecurityPolicy = SecurityPolicy.AskPermission)
         If String.IsNullOrWhiteSpace(workspace) Then
             Throw New ArgumentNullException(NameOf(workspace))
@@ -128,6 +146,7 @@ Public Class Sandbox
         ("delete", GetType(Tools.DeleteTool)),
         ("move", GetType(Tools.MoveTool)),
         ("shell", GetType(Tools.ShellTool)),
+        ("ask_user_question", GetType(Tools.AskUserQuestionTool)),
         ("job_start", GetType(Tools.JobStartTool)),
         ("job_kill", GetType(Tools.JobKillTool)),
         ("job_list", GetType(Tools.JobListTool)),
@@ -350,6 +369,22 @@ Public Class Sandbox
         End If
 
         Return $"Error: permission denied by the user for '{operation}' on '{target}'."
+    End Function
+
+    ''' <summary>
+    ''' Raise <see cref="AskUser"/> and let the host show the pending
+    ''' questions to the user. Returns False when no host subscribed, so
+    ''' that the calling tool can report the missing channel instead of
+    ''' waiting for an answer that can never arrive.
+    ''' </summary>
+    Friend Function RaiseAskUser(e As Tools.QuestionEventArg) As Boolean
+        If AskUserEvent Is Nothing Then
+            Return False
+        End If
+
+        RaiseEvent AskUser(Me, e)
+
+        Return True
     End Function
 
     ''' <summary>

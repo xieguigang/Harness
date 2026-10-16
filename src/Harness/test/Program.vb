@@ -47,17 +47,18 @@ Namespace HarnessSelfTest
 
             Dim mcpExit As Integer = McpSelfTest.RunAll()
             Dim skillExit As Integer = SkillSelfTest.RunAll()
+            Dim askExit As Integer = AskUserQuestionSelfTest.RunAll()
 
             Console.WriteLine()
-            Console.WriteLine($"HarnessSelfTest finished: mcp={(If(mcpExit = 0, "ok", "failed"))}, skills={(If(skillExit = 0, "ok", "failed"))}")
+            Console.WriteLine($"HarnessSelfTest finished: mcp={(If(mcpExit = 0, "ok", "failed"))}, skills={(If(skillExit = 0, "ok", "failed"))}, ask={(If(askExit = 0, "ok", "failed"))}")
 
-            Return If(mcpExit = 0 AndAlso skillExit = 0, 0, 1)
+            Return If(mcpExit = 0 AndAlso skillExit = 0 AndAlso askExit = 0, 0, 1)
         End Function
 
         Private Sub PrintUsage()
-            Console.WriteLine("HarnessSelfTest - harness mcp self test")
+            Console.WriteLine("HarnessSelfTest - harness self test (mcp client, skill system, ask_user_question)")
             Console.WriteLine()
-            Console.WriteLine("  HarnessSelfTest                    run the offline mcp self test")
+            Console.WriteLine("  HarnessSelfTest                    run the offline self tests (mcp, skills, ask_user_question)")
             Console.WriteLine("  HarnessSelfTest --polish           run the real nature-polishing skill end to end test")
             Console.WriteLine("  HarnessSelfTest --stub-mcp-server  act as the stub mcp server on stdio")
             Console.WriteLine()
