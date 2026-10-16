@@ -743,7 +743,7 @@ Public Class LLMClient : Implements IDisposable
                 If firstLine = "<｜｜DSML｜｜tool_calls>" AndAlso lastLine = "</｜｜DSML｜｜tool_calls>" Then
                     Dim result As New List(Of String)
 
-                    Dim dsmlCalls As IEnumerable(Of ToolCallInfo) = DsmlParser.ParseToolCalls(outBuf.ToString)
+                    Dim dsmlCalls As ToolCallInfo() = DsmlParser.ParseToolCalls(outBuf.ToString).ToArray
 
                     If logRound IsNot Nothing Then
                         logRound.DsmlFallback = True
