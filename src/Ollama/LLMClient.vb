@@ -1,4 +1,5 @@
 ﻿Imports System.ComponentModel
+Imports System.Diagnostics
 Imports System.Net.Http
 Imports System.Text
 Imports System.Threading
@@ -6,6 +7,7 @@ Imports Microsoft.VisualBasic.CommandLine.Reflection
 Imports Microsoft.VisualBasic.Serialization.JSON
 Imports Ollama.JSON
 Imports Ollama.JSON.FunctionCall
+Imports Ollama.Logging
 
 ''' <summary>
 ''' 统一的大语言模型客户端：持有记忆、函数注册表与日志，调用任意 <see cref="ILLMProvider"/> 完成多轮对话与工具调用，
@@ -31,6 +33,12 @@ Public Class LLMClient : Implements IDisposable
     Dim _totalCacheHit As Long
     Dim _totalCacheMiss As Long
     Dim _lastUsage As ChatUsage
+
+    ''' <summary>
+    ''' 结构化会话日志。只有通过构造函数传入日志目录、或调用 <see cref="EnableSessionLog"/> 后才有值，
+    ''' 为 Nothing 时所有埋点自动跳过，客户端行为与启用前完全一致。
+    ''' </summary>
+    Dim _sessionLog As ChatSessionLogger
 
     ''' <summary>
     ''' 用量明细列表的容量上限，避免长时间 Agent 会话导致无界增长
@@ -256,11 +264,18 @@ Public Class LLMClient : Implements IDisposable
     ''' <param name="maxRound">
     ''' For LLM agent run a complex task, please increase this rounds number
     ''' </param>
+    ''' <param name="chatLogFolder">
+    ''' 结构化会话日志的根目录。留空则不写任何日志文件；传入目录后，每一次对话、每一轮请求、
+    ''' 每一次工具调用与每一份用量都会以 json 数组的形式写进该目录下的会话子目录。
+    ''' </param>
+    ''' <param name="chatLogOptions">会话日志的记录详细程度；留空则保留全部内容。</param>
     Sub New(provider As ILLMProvider, model As String,
             Optional logfile As String = Nothing,
             Optional preserveMemory As Boolean = True,
             Optional maxRound As Integer = 15,
-            Optional debug As Boolean = False)
+            Optional debug As Boolean = False,
+            Optional chatLogFolder As String = Nothing,
+            Optional chatLogOptions As ChatSessionLogOptions = Nothing)
 
         _provider = provider
         _model = model
@@ -268,6 +283,148 @@ Public Class LLMClient : Implements IDisposable
         _preserveMemory = preserveMemory
         _caller = New FunctionCaller(verbose:=debug)
         _context = New ChatContextMemory(logfile)
+
+        If Not String.IsNullOrWhiteSpace(chatLogFolder) Then
+            Call EnableSessionLog(chatLogFolder, chatLogOptions)
+        End If
+    End Sub
+
+    ''' <summary>
+    ''' 结构化会话日志器：未启用时为 Nothing。
+    ''' </summary>
+    ''' <returns>
+    ''' 当前客户端持有的日志器；通过它可以在会话结束时调用 <c>Close()</c> 收尾，
+    ''' 或在开始前设置 <c>SessionId</c> 让两套日志共享同一个会话 id。
+    ''' </returns>
+    Public ReadOnly Property SessionLog As ChatSessionLogger
+        Get
+            Return _sessionLog
+        End Get
+    End Property
+
+    ''' <summary>
+    ''' 启用结构化会话日志：之后每一次对话、每一轮请求、每一次工具调用与每一份用量都会被
+    ''' 写进 <paramref name="folder"/> 下的会话子目录（session.json / turns.json /
+    ''' tool-calls.json / usage.json / messages.json）。不调用本方法、也不通过构造函数传入
+    ''' 目录时不会写盘，客户端行为完全不变。
+    ''' </summary>
+    ''' <param name="folder">日志根目录，其下按会话 id 建立子目录。</param>
+    ''' <param name="options">记录的详细程度；留空保留全部内容。</param>
+    ''' <param name="sessionId">
+    ''' 会话 id，留空自动生成。宿主可以传入自己的会话 id（例如 Harness 工具日志的会话 id），
+    ''' 这样两份日志可以按会话 id 对账。
+    ''' </param>
+    ''' <returns>当前客户端，便于链式调用。</returns>
+    Public Function EnableSessionLog(folder As String,
+                                     Optional options As ChatSessionLogOptions = Nothing,
+                                     Optional sessionId As String = Nothing) As LLMClient
+
+        _sessionLog = New ChatSessionLogger(
+            folder,
+            _model,
+            If(_provider Is Nothing, Nothing, _provider.ApiEndpoint),
+            options,
+            sessionId)
+
+        ' 上下文裁剪事件：先记进日志，再把消息交给宿主自己挂的归档回调
+        Dim hostEvict As Action(Of List(Of ChatMessage)) = _context.OnEvict
+
+        _context.OnEvict = Sub(removed As List(Of ChatMessage))
+                               Call LogEvictedMessages(removed)
+
+                               If hostEvict IsNot Nothing Then
+                                   Call hostEvict(removed)
+                               End If
+                           End Sub
+
+        Return Me
+    End Function
+
+    ''' <summary>
+    ''' 记录一次上下文窗口裁剪：被移出活跃窗口的消息进会话日志的事件列表。
+    ''' </summary>
+    ''' <param name="removed">被裁剪掉的消息。</param>
+    Private Sub LogEvictedMessages(removed As List(Of ChatMessage))
+        If _sessionLog Is Nothing OrElse removed Is Nothing OrElse removed.Count = 0 Then
+            Return
+        End If
+
+        Dim text As New StringBuilder()
+
+        For Each msg As ChatMessage In removed
+            If msg Is Nothing Then
+                Continue For
+            End If
+
+            Call text.AppendLine("[" & msg.Role & "] " & msg.Content)
+        Next
+
+        Call _sessionLog.LogEvent(ChatLogText.EventEvict,
+                                  removed.Count & " messages left the context window",
+                                  text.ToString())
+    End Sub
+
+    ''' <summary>
+    ''' 打开一次对话的记录；未启用日志时返回 Nothing，调用方据此跳过后续埋点。
+    ''' </summary>
+    ''' <param name="prompt">用户的提问。</param>
+    ''' <param name="req">为这次对话构造好的请求。</param>
+    Private Function BeginTurn(prompt As String, req As ChatRequestOptions) As ChatTurnRecord
+        If _sessionLog Is Nothing Then
+            Return Nothing
+        End If
+
+        ' system prompt 与温度等设置可能在构造之后才配好，所以每次对话开始时重新同步一次
+        Call _sessionLog.Configure(
+            systemMessage:=system_message,
+            temperature:=temperature,
+            maxRounds:=_maxRounds,
+            preserveMemory:=_preserveMemory)
+
+        Return _sessionLog.BeginTurn(prompt, req, _maxRounds)
+    End Function
+
+    ''' <summary>
+    ''' 记下模型在这一轮里请求了哪些工具调用。
+    ''' </summary>
+    ''' <param name="logRound">本轮的记录。</param>
+    ''' <param name="calls">模型请求的工具调用。</param>
+    Private Sub LogRequestedCalls(logRound As ChatRoundRecord, calls As IEnumerable(Of ToolCallInfo))
+        If logRound Is Nothing OrElse calls Is Nothing Then
+            Return
+        End If
+
+        Dim list As New List(Of LoggedToolCallRequest)()
+
+        For Each tc As ToolCallInfo In calls
+            If tc Is Nothing Then
+                Continue For
+            End If
+
+            list.Add(New LoggedToolCallRequest With {
+                .Id = tc.Id,
+                .Name = tc.FunctionName,
+                .Arguments = tc.FunctionArguments,
+                .DsmlLeak = tc.DeepSeekDSMLLeak
+            })
+        Next
+
+        logRound.RequestedToolCalls = list
+    End Sub
+
+    ''' <summary>
+    ''' 关闭一轮请求的记录；未启用日志时什么也不做。
+    ''' </summary>
+    ''' <param name="logRound">本轮的记录。</param>
+    ''' <param name="think">本轮的推理文本。</param>
+    ''' <param name="output">本轮的正文。</param>
+    ''' <param name="errorMessage">本轮失败的原因。</param>
+    Private Sub EndRound(logRound As ChatRoundRecord, think As String, output As String, Optional errorMessage As String = Nothing)
+        If logRound Is Nothing Then
+            Return
+        End If
+
+        Call _sessionLog.EndRound(logRound, think, output, errorMessage)
     End Sub
 
     Public Function HookResponseStream(getOutputToken As Action(Of String), Optional getThinkToken As Action(Of String) = Nothing) As LLMClient
@@ -279,19 +436,54 @@ Public Class LLMClient : Implements IDisposable
     ''' <summary>
     ''' 执行单个工具调用：优先使用 ai_caller 中注册的函数，否则使用外部 tool_invoke 引擎
     ''' </summary>
-    Private Function ExecuteTool(calle As ToolCallInfo) As String
+    ''' <param name="calle">模型请求的工具调用。</param>
+    ''' <param name="logTurn">所属对话的记录；未启用日志时为 Nothing。</param>
+    ''' <param name="logRound">所属轮次的记录；未启用日志时为 Nothing。</param>
+    Private Function ExecuteTool(calle As ToolCallInfo,
+                                 Optional logTurn As ChatTurnRecord = Nothing,
+                                 Optional logRound As ChatRoundRecord = Nothing) As String
+
         Dim [call] As New FunctionCall With {
             .name = calle.FunctionName,
             .arguments = calle.FunctionArguments
         }
         Dim result_str As String
 
-        If _caller.CheckFunction([call].name) Then
-            result_str = _caller.Call([call])
-        ElseIf tool_invoke IsNot Nothing Then
-            result_str = tool_invoke([call])
+        If _sessionLog Is Nothing Then
+            If _caller.CheckFunction([call].name) Then
+                result_str = _caller.Call([call])
+            ElseIf tool_invoke IsNot Nothing Then
+                result_str = tool_invoke([call])
+            Else
+                result_str = $"error: the tool function '{[call].name}' is not registered or no external function tool_call invoke engine was configured!"
+            End If
         Else
-            result_str = $"error: the tool function '{[call].name}' is not registered or no external function tool_call invoke engine was configured!"
+            Dim source As String
+
+            If _caller.CheckFunction([call].name) Then
+                source = ChatLogText.SourceRegistry
+            ElseIf tool_invoke IsNot Nothing Then
+                source = ChatLogText.SourceExternal
+            Else
+                source = ChatLogText.SourceMissing
+            End If
+
+            result_str = _sessionLog.LogToolCall(
+                logTurn, logRound,
+                [call].name,
+                calle.Id,
+                calle.FunctionArguments,
+                source,
+                calle.DeepSeekDSMLLeak,
+                Function() As String
+                    If source = ChatLogText.SourceRegistry Then
+                        Return _caller.Call([call])
+                    ElseIf source = ChatLogText.SourceExternal Then
+                        Return tool_invoke([call])
+                    End If
+
+                    Return $"error: the tool function '{[call].name}' is not registered or no external function tool_call invoke engine was configured!"
+                End Function)
         End If
 
         If calle.DeepSeekDSMLLeak Then
@@ -346,21 +538,41 @@ Public Class LLMClient : Implements IDisposable
         Dim fullOutput As New StringBuilder
         Dim llmResponse As LLMsResponse
 
+        ' 结构化会话日志：未启用时 logTurn 为 Nothing，下面所有埋点自动跳过
+        Dim logTurn As ChatTurnRecord = BeginTurn(prompt_text, reqOptions)
+        Dim turnWatch As Stopwatch = If(logTurn Is Nothing, Nothing, Stopwatch.StartNew())
+
+        If logTurn IsNot Nothing Then
+            Call _sessionLog.LogMessage(newUserMsg, logTurn, Nothing)
+        End If
+
         ' 循环处理：如果模型返回 Tool Calls，执行后继续请求，直到返回最终文本
         ' 在这个for循环中用来处理工具函数调用，以及由于网络失败或者文本解析错误导致的重试
         For round As Integer = 1 To _maxRounds
             Try
                 llmResponse = Nothing
-                llmResponse = Await ChatRound(currentReq, cancellationToken, fullThink, fullOutput)
+                llmResponse = Await ChatRound(currentReq, cancellationToken, fullThink, fullOutput, logTurn)
             Catch ex As Exception
                 ' 20260723 network error will retry in next round
                 llmResponse = Nothing
 
                 Call App.LogException(ex)
                 Call ex.Message.warning
+
+                If logTurn IsNot Nothing Then
+                    Call _sessionLog.LogEvent(ChatLogText.EventRetry,
+                        $"round {round} failed: {ex.GetType().Name}: {ex.Message}",
+                        ex.ToString(),
+                        logTurn)
+                End If
             End Try
 
             If Not llmResponse Is Nothing Then
+                If logTurn IsNot Nothing Then
+                    logTurn.DurationMs = Math.Round(turnWatch.Elapsed.TotalMilliseconds, 3)
+                    Call _sessionLog.EndTurn(logTurn, llmResponse.think, llmResponse.output, ChatLogText.StatusOk)
+                End If
+
                 Return llmResponse
             Else
                 ' 5. 准备下一轮请求 (带上工具结果)
@@ -373,18 +585,69 @@ Public Class LLMClient : Implements IDisposable
             End If
         Next
 
+        If logTurn IsNot Nothing Then
+            logTurn.DurationMs = Math.Round(turnWatch.Elapsed.TotalMilliseconds, 3)
+
+            Call _sessionLog.LogEvent(ChatLogText.EventMaxRounds,
+                $"the turn used up all {_maxRounds} rounds without a final answer",
+                Nothing,
+                logTurn)
+            Call _sessionLog.EndTurn(logTurn, fullThink.ToString(), fullOutput.ToString(), ChatLogText.StatusMaxRounds)
+        End If
+
         Throw New MaxTryRunException(_maxRounds)
     End Function
 
-    Private Async Function ChatRound(currentReq As ChatRequestOptions, cancellationToken As CancellationToken, fullThink As StringBuilder, fullOutput As StringBuilder) As Task(Of LLMsResponse)
+    ''' <param name="logTurn">所属对话的记录；未启用日志时为 Nothing。</param>
+    Private Async Function ChatRound(currentReq As ChatRequestOptions, cancellationToken As CancellationToken,
+                                     fullThink As StringBuilder, fullOutput As StringBuilder,
+                                     Optional logTurn As ChatTurnRecord = Nothing) As Task(Of LLMsResponse)
+
         Dim thinkBuf As New StringBuilder
         Dim outBuf As New StringBuilder
         Dim toolCallsToExecute As New List(Of ToolCallInfo)
+
+        ' 本轮的记录：未启用日志时为 Nothing
+        Dim logRound As ChatRoundRecord = If(logTurn Is Nothing, Nothing, _sessionLog.BeginRound(logTurn, currentReq))
+        Dim streamWatch As New Stopwatch()
+
         ' 1. 通过 Provider 拉取流式数据
         Dim chunks As IEnumerable(Of ChatResponseChunk) = Await _provider.StreamChatAsync(currentReq, cancellationToken)
 
+        If logRound IsNot Nothing Then
+            Call streamWatch.Start()
+        End If
+
         ' 2. 处理流式响应
         For Each chunk As ChatResponseChunk In chunks
+            If logRound IsNot Nothing Then
+                logRound.ChunkCount += 1
+
+                If logRound.FirstTokenMs <= 0 Then
+                    logRound.FirstTokenMs = Math.Round(streamWatch.Elapsed.TotalMilliseconds, 3)
+                End If
+
+                If _sessionLog.Options.CaptureChunks Then
+                    If logRound.Chunks Is Nothing Then
+                        logRound.Chunks = New List(Of String)()
+                    End If
+
+                    Dim label As String = ""
+
+                    If chunk.IsDone Then
+                        label &= "[done] "
+                    End If
+                    If chunk.Usage IsNot Nothing Then
+                        label &= "[usage] "
+                    End If
+                    If chunk.ToolCalls IsNot Nothing Then
+                        label &= "[tools:" & chunk.ToolCalls.Count & "] "
+                    End If
+
+                    Call logRound.Chunks.Add(label & If(chunk.ThinkContent, "") & If(chunk.DeltaContent, ""))
+                End If
+            End If
+
             If Not String.IsNullOrEmpty(chunk.ThinkContent) Then
                 If echo_think_chunks Then
                     Call Console.Write(chunk.ThinkContent)
@@ -413,13 +676,18 @@ Public Class LLMClient : Implements IDisposable
             ' 用量统计由 provider 统一挂载在结束帧上，必须早于下面的 IsDone 跳出判断，
             ' 否则会漏掉本次请求的 usage 数据
             If chunk.Usage IsNot Nothing Then
-                Call RecordUsage(chunk.Usage)
+                Call RecordUsage(chunk.Usage, logTurn, logRound)
             End If
 
             If chunk.IsDone Then
                 Exit For
             End If
         Next
+
+        If logRound IsNot Nothing Then
+            streamWatch.Stop()
+            logRound.StreamMs = Math.Round(streamWatch.Elapsed.TotalMilliseconds, 3)
+        End If
 
         fullThink.Append(thinkBuf.ToString())
         fullOutput.Append(outBuf.ToString())
