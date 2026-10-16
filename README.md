@@ -1,4 +1,4 @@
-# LLMs — A Large-Language-Model Toolkit in VisualBasic.NET
+# A Large-Language-Model Harness Toolkit Written in VisualBasic.NET
 
 A collection of VisualBasic.NET projects that together provide everything you
 need to build, host, and interact with large language models: a unified LLM
