@@ -4,6 +4,12 @@ Imports Ollama
 Module Program
 
     Sub Main(args As String())
+        If args.Length > 0 AndAlso args(0) = "--sessionlog" Then
+            ' 结构化会话日志的离线验证（不需要网络）
+            Environment.Exit(SessionLogSelfTest.RunAll())
+            Return
+        End If
+
         ' 运行持久化与全文模糊检索的最小验证（无需网络 / LLM）
         Call PersistenceAndSearchDemo().GetAwaiter().GetResult()
 

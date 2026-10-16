@@ -367,6 +367,10 @@ Namespace Logging
 
             SyncLock _lock
                 _roundCount += 1
+
+                If turn IsNot Nothing AndAlso turn.Rounds IsNot Nothing Then
+                    turn.Rounds.Add(round)
+                End If
             End SyncLock
 
             Return round
@@ -391,6 +395,15 @@ Namespace Logging
 
             round.Think = Capture(think)
             round.Output = Capture(output)
+
+            ' the duration of the whole round: the request, the stream and
+            ' whatever tools ran in between, measured from the moment the
+            ' record was opened
+            Dim started As DateTimeOffset
+
+            If DateTimeOffset.TryParse(round.TimestampUtc, Nothing, Globalization.DateTimeStyles.RoundtripKind, started) Then
+                round.DurationMs = Math.Round((DateTimeOffset.UtcNow - started).TotalMilliseconds, 3)
+            End If
 
             If errorMessage IsNot Nothing Then
                 round.Status = ChatLogText.StatusFailed

@@ -176,6 +176,15 @@ Public Class Sandbox
     End Property
 
     ''' <summary>
+    ''' True lets the sandbox put the chat log of the client - every request,
+    ''' every reasoning, every answer and every tool call of the session -
+    ''' next to its own tool call log, under the same session id. The two logs
+    ''' note down where the other one lives; turn this off to log tool calls
+    ''' only.
+    ''' </summary>
+    Public Property LlmSessionLogging As Boolean = True
+
+    ''' <summary>
     ''' Optional host hook called at the beginning of every tool call, so that
     ''' each record can say what the host was doing - the task it is working
     ''' on and the llm round the call belongs to.
@@ -258,6 +267,11 @@ Public Class Sandbox
             Throw New ArgumentNullException(NameOf(client))
         End If
 
+        ' put the chat log of the client next to the tool call log of the
+        ' sandbox and let both of them run under the same session id, so the
+        ' two can be read side by side afterwards
+        Call LinkSessionLog(client)
+
         ' AddFunction(Of T) looks the tool method up through GetType(T), i.e.
         ' through the static type of its argument, so the generic helper below
         ' is closed over the concrete tool type of every registry entry
@@ -290,6 +304,37 @@ Public Class Sandbox
 
         Return Me
     End Function
+
+    ''' <summary>
+    ''' Align the chat log of the client with the tool call log of this
+    ''' sandbox: both run under the same session id and each of them notes
+    ''' down where the other one lives, so a reviewer who opens one of them
+    ''' finds the other.
+    ''' 
+    ''' The client only logs when it was told to - either by the host handing
+    ''' a log folder to its constructor, or by this sandbox enabling it here.
+    ''' </summary>
+    ''' <param name="client">The client whose chat log should be linked.</param>
+    Private Sub LinkSessionLog(client As LLMClient)
+        If Not LlmSessionLogging Then
+            Return
+        End If
+
+        If client.SessionLog Is Nothing Then
+            Dim folder As String = IO.Path.Combine(IO.Path.Combine(wsRoot, ArtifactFolder), "llm-sessions")
+
+            Call client.EnableSessionLog(folder, sessionId:=wsLog.SessionId)
+        Else
+            ' the host enabled it already: only the id can still be aligned,
+            ' and only while nothing was written yet
+            client.SessionLog.SessionId = wsLog.SessionId
+        End If
+
+        If client.SessionLog IsNot Nothing Then
+            client.SessionLog.HarnessLogFolder = wsLog.Folder
+            wsLog.LlmLogFolder = client.SessionLog.Folder
+        End If
+    End Sub
 
     ''' <summary>
     ''' Create one tool of the given type, bound to this sandbox, and register

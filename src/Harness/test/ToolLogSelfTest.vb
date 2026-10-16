@@ -40,6 +40,7 @@ Namespace HarnessSelfTest
                 RunTest("a damaged log tail is repaired", AddressOf TestTailRepair)
                 RunTest("permission decisions are recorded", AddressOf TestPermissionEvents)
                 RunTest("an mcp tool is logged with its server", AddressOf TestMcpLogged)
+                RunTest("the chat log of the client is linked to the tool log", AddressOf TestLlmSessionLinkage)
                 RunTest("the session summary closes the log", AddressOf TestSessionSummary)
             Finally
                 If Environment.GetEnvironmentVariable("HARNESS_KEEP_TOOLLOG") <> "1" Then
@@ -81,6 +82,48 @@ Namespace HarnessSelfTest
                 Fail(message)
             End If
         End Sub
+
+        ' ====================================================================
+        ' a stub backend for the linkage test
+        ' ====================================================================
+
+        ''' <summary>
+        ''' a provider that hands out scripted chunks instead of talking to a
+        ''' model, so the chat log of the client can be exercised offline.
+        ''' </summary>
+        Private NotInheritable Class StubProvider
+            Implements Ollama.ILLMProvider
+
+            Public ReadOnly Property ApiEndpoint As String Implements Ollama.ILLMProvider.ApiEndpoint
+                Get
+                    Return "http://stub.local/v1"
+                End Get
+            End Property
+
+            Public ReadOnly Property SupportsCacheStats As Boolean Implements Ollama.ILLMProvider.SupportsCacheStats
+                Get
+                    Return False
+                End Get
+            End Property
+
+            Public Function StreamChatAsync(options As ChatRequestOptions, cancellationToken As CancellationToken) As Task(Of IEnumerable(Of ChatResponseChunk)) Implements Ollama.ILLMProvider.StreamChatAsync
+                Dim chunks As New List(Of ChatResponseChunk) From {
+                    New ChatResponseChunk With {.ThinkContent = "thinking"},
+                    New ChatResponseChunk With {.DeltaContent = "hello"},
+                    New ChatResponseChunk With {
+                        .IsDone = True,
+                        .Usage = New ChatUsage With {.PromptTokens = 10, .CompletionTokens = 5}
+                    }
+                }
+
+                Return Task.FromResult(Of IEnumerable(Of ChatResponseChunk))(chunks)
+            End Function
+
+            Public Function GetModelInformation(model As String, timeout As Double, verbose As Boolean) As Task(Of ModelInfo) Implements Ollama.ILLMProvider.GetModelInformation
+                Return Task.FromResult(Of ModelInfo)(Nothing)
+            End Function
+
+        End Class
 
         Private Sub Fail(message As String)
             _failed += 1
@@ -142,6 +185,31 @@ Namespace HarnessSelfTest
             Dim document As JsonDocument = JsonDocument.Parse(text)
 
             Return document.RootElement.Clone()
+        End Function
+
+        Private Function ReadObject(path As String) As JsonElement
+            Return ReadArray(path)
+        End Function
+
+        ''' <summary>read a nested string value, e.g. prompt.text.</summary>
+        Private Function Str2(item As JsonElement, ParamArray path As String()) As String
+            Dim current As JsonElement = item
+
+            For Each name As String In path
+                Dim node As JsonElement
+
+                If Not current.TryGetProperty(name, node) Then
+                    Return Nothing
+                End If
+
+                current = node
+            Next
+
+            If current.ValueKind = JsonValueKind.Null Then
+                Return Nothing
+            End If
+
+            Return current.GetString()
         End Function
 
         Private Function Str(item As JsonElement, name As String) As String
@@ -522,6 +590,54 @@ Namespace HarnessSelfTest
 
             Check(Str(log(0), "status") = ToolLogText.StatusDenied, "the denied call must be marked denied")
             Check(Str(log(1), "status") = ToolLogText.StatusOk, "the granted call must be marked ok")
+        End Sub
+
+        ''' <summary>
+        ''' the chat log of the client lives next to the tool call log of the
+        ''' sandbox and shares its session id, so the two can be read side by
+        ''' side afterwards.
+        ''' </summary>
+        Private Sub TestLlmSessionLinkage()
+            Dim ws As String = NewWorkspace("llmlink")
+            Dim notePath As String = Path.Combine(ws, "note.txt")
+
+            File.WriteAllText(notePath, "hello", New UTF8Encoding(False))
+
+            Dim sandbox As New Sandbox(ws, SecurityPolicy.FullControls)
+            Dim client As New LLMClient(New StubProvider(), "stub-model")
+
+            Call sandbox.RegisterTo(client)
+
+            Check(client.SessionLog IsNot Nothing, "the sandbox must enable the chat log of the client")
+            Check(client.SessionLog.SessionId = sandbox.ToolLog.SessionId, "both logs must share the session id")
+
+            Dim answer As LLMsResponse = client.Chat("say hello").GetAwaiter().GetResult()
+
+            Check(answer IsNot Nothing AndAlso answer.output = "hello", "the client must still answer")
+
+            Call Drive(client, "read", "file_path", notePath)
+            Call client.SessionLog.Close()
+            Call CloseLog(sandbox)
+
+            Dim llmFolder As String = Path.Combine(ws, ".harness", "llm-sessions", sandbox.ToolLog.SessionId)
+
+            Check(Directory.Exists(llmFolder), "the chat log must live under the shared id: " & llmFolder)
+            Check(File.Exists(Path.Combine(llmFolder, "turns.json")), "the chat log must hold its turns")
+
+            Dim turn As JsonElement = ReadArray(Path.Combine(llmFolder, "turns.json"))(0)
+
+            Check(Str(turn, "model") = "stub-model", "the chat log must name the model")
+            Check(Str2(turn, "output", "text") = "hello", "the answer must be in the chat log")
+
+            Dim chatSession As JsonElement = ReadObject(Path.Combine(llmFolder, "session.json"))
+
+            Check(Str(chatSession, "harnessLogFolder") = sandbox.ToolLog.Folder,
+                  "the chat log must point at the tool log folder")
+
+            Dim toolSession As JsonElement = ReadObject(sandbox.ToolLog.SessionFile)
+
+            Check(Str(toolSession, "llmLogFolder") = llmFolder, "the tool log must point at the chat log folder")
+            Check(Str(toolSession, "sessionId") = sandbox.ToolLog.SessionId, "the tool log keeps its own id")
         End Sub
 
         ''' <summary>

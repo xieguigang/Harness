@@ -427,6 +427,10 @@ Namespace Logging
         <JsonPropertyName("permissionEvents")>
         Public Property PermissionEvents As Integer
 
+        ''' <summary>the chat log folder of the client, when the two logs share a session id.</summary>
+        <JsonPropertyName("llmLogFolder")>
+        Public Property LlmLogFolder As String
+
         <JsonPropertyName("persistent")>
         Public Property Persistent As Boolean
 

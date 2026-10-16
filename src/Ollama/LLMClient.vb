@@ -564,6 +564,18 @@ Public Class LLMClient : Implements IDisposable
                         $"round {round} failed: {ex.GetType().Name}: {ex.Message}",
                         ex.ToString(),
                         logTurn)
+
+                    ' the round the exception came from stays in the record of
+                    ' the turn: mark it as the one that failed, its text is
+                    ' whatever the stream had delivered before it broke
+                    If logTurn.Rounds.Count > 0 Then
+                        Dim broken As ChatRoundRecord = logTurn.Rounds(logTurn.Rounds.Count - 1)
+
+                        If broken.Status = ChatLogText.StatusOk Then
+                            broken.Status = ChatLogText.StatusFailed
+                            broken.ErrorMessage = $"{ex.GetType().Name}: {ex.Message}"
+                        End If
+                    End If
                 End If
             End Try
 
@@ -731,8 +743,15 @@ Public Class LLMClient : Implements IDisposable
                 If firstLine = "<｜｜DSML｜｜tool_calls>" AndAlso lastLine = "</｜｜DSML｜｜tool_calls>" Then
                     Dim result As New List(Of String)
 
-                    For Each tc As ToolCallInfo In DsmlParser.ParseToolCalls(outBuf.ToString)
-                        Dim fval As String = ExecuteTool(tc)
+                    Dim dsmlCalls As IEnumerable(Of ToolCallInfo) = DsmlParser.ParseToolCalls(outBuf.ToString)
+
+                    If logRound IsNot Nothing Then
+                        logRound.DsmlFallback = True
+                        Call LogRequestedCalls(logRound, dsmlCalls)
+                    End If
+
+                    For Each tc As ToolCallInfo In dsmlCalls
+                        Dim fval As String = ExecuteTool(tc, logTurn, logRound)
 
                         Call result.Add("工具函数调用：" & tc.GetJson)
                         Call result.Add("工具返回结果：" & fval)
@@ -751,7 +770,14 @@ Public Class LLMClient : Implements IDisposable
                     Await _context.EnqueueAsync(llm)
                     Await _context.EnqueueAsync(err)
 
+                    If logTurn IsNot Nothing Then
+                        Call _sessionLog.LogMessage(llm, logTurn, logRound)
+                        Call _sessionLog.LogMessage(err, logTurn, logRound)
+                    End If
+
                     currentReq.Messages.AddRange({llm, err})
+
+                    Call EndRound(logRound, thinkBuf.ToString(), outBuf.ToString())
 
                     Return Nothing
                 End If
@@ -765,6 +791,12 @@ Public Class LLMClient : Implements IDisposable
             If _preserveMemory Then
                 Await _context.EnqueueAsync(finalAssistantMsg)
             End If
+
+            If logTurn IsNot Nothing Then
+                Call _sessionLog.LogMessage(finalAssistantMsg, logTurn, logRound)
+            End If
+
+            Call EndRound(logRound, thinkBuf.ToString(), outBuf.ToString())
 
             Return New LLMsResponse With {
                 .think = fullThink.ToString().Trim(),
@@ -782,11 +814,17 @@ exec:
         If _preserveMemory Then
             Await _context.EnqueueAsync(assistantMsg)
         End If
+
+        If logTurn IsNot Nothing Then
+            Call _sessionLog.LogMessage(assistantMsg, logTurn, logRound)
+            Call LogRequestedCalls(logRound, toolCallsToExecute)
+        End If
+
         currentReq.Messages.Add(assistantMsg)
 
         ' 逐个执行工具
         For Each tc As ToolCallInfo In toolCallsToExecute
-            Dim fval As String = ExecuteTool(tc)
+            Dim fval As String = ExecuteTool(tc, logTurn, logRound)
             Dim toolMsg As New ChatMessage With {
                 .Role = "tool",
                 .ToolCallId = tc.Id,
@@ -802,8 +840,14 @@ exec:
                 Await _context.EnqueueAsync(toolMsg)
             End If
 
+            If logTurn IsNot Nothing Then
+                Call _sessionLog.LogMessage(toolMsg, logTurn, logRound)
+            End If
+
             currentReq.Messages.Add(toolMsg)
         Next
+
+        Call EndRound(logRound, thinkBuf.ToString(), outBuf.ToString())
 
         Return Nothing
     End Function
@@ -812,8 +856,17 @@ exec:
     ''' 累计一次请求的 token 用量数据并追加明细快照
     ''' </summary>
     ''' <param name="usage">provider 归一化后的用量数据</param>
-    Private Sub RecordUsage(usage As ChatUsage)
+    ''' <param name="logTurn">所属对话的记录；未启用日志时为 Nothing。</param>
+    ''' <param name="logRound">所属轮次的记录；未启用日志时为 Nothing。</param>
+    Private Sub RecordUsage(usage As ChatUsage,
+                            Optional logTurn As ChatTurnRecord = Nothing,
+                            Optional logRound As ChatRoundRecord = Nothing)
+
         _lastUsage = usage
+
+        If _sessionLog IsNot Nothing Then
+            Call _sessionLog.LogUsage(usage, logTurn, logRound)
+        End If
         _totalPromptTokens += usage.PromptTokens
         _totalCompletionTokens += usage.CompletionTokens
 
@@ -926,6 +979,10 @@ exec:
     Protected Overridable Sub Dispose(disposing As Boolean)
         If Not disposedValue Then
             If disposing Then
+                If _sessionLog IsNot Nothing Then
+                    Call _sessionLog.Close()
+                End If
+
                 Call _context.Dispose()
             End If
 

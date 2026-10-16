@@ -393,6 +393,12 @@ Namespace Logging
         ''' </summary>
         Public Property ContextProvider As Func(Of ToolCallContext)
 
+        ''' <summary>
+        ''' the chat log folder of the client this tool log shares its session
+        ''' id with, so a reader of one log finds the other.
+        ''' </summary>
+        Public Property LlmLogFolder As String
+
         ' ====================================================================
         ' wrapping a tool backend
         ' ====================================================================
@@ -1061,6 +1067,7 @@ Namespace Logging
                         .Errors = errors,
                         .RegisteredTools = _registrations.Count,
                         .PermissionEvents = _permissions.Count,
+                        .LlmLogFolder = LlmLogFolder,
                         .Persistent = Persistent,
                         .LastError = _lastError,
                         .Files = New Dictionary(Of String, String)(StringComparer.Ordinal) From {
