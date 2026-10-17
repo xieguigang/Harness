@@ -130,6 +130,9 @@
         turns: {}                // seq -> full turn record
     };
 
+    /* 超过这个大小的 json 只用原文显示：交互树渲染几十万字符会卡住界面 */
+    const RawTreeMaxChars = 262144;
+
     const TOOL_TABS = [
         { id: 'overview', label: '概览' },
         { id: 'calls', label: '工具调用', file: 'tool-calls.json' },
@@ -1035,11 +1038,52 @@
             return;
         }
 
-        const lines = reply.text.split('\n');
+        // 能解析成 json 就用可交互树来显示，否则退回带行号的原文
+        let data = null;
+        let parseOk = false;
+
+        if (window.jQuery && !reply.truncated && reply.size <= RawTreeMaxChars) {
+            try {
+                data = JSON.parse(reply.text);
+                parseOk = true;
+            } catch (e) {
+                parseOk = false;
+            }
+        }
+
+        if (parseOk) {
+            $('rawBody').innerHTML = `<div class="raw-toolbar">
+                    <button type="button" class="btn btn-ghost" id="jsonExpand">全部展开</button>
+                    <button type="button" class="btn btn-ghost" id="jsonCollapse">全部折叠</button>
+                    <span class="muted tiny">点击属性名或左侧 +/- 可折叠 / 展开该节点</span>
+                </div>
+                <div id="jsonTree"></div>`;
+
+            try {
+                window.jQuery('#jsonTree').JSONView(data, { nl2br: true, escape: true, collapsed: false });
+
+                $('jsonExpand').addEventListener('click', function () {
+                    window.jQuery('#jsonTree').JSONView('expand');
+                });
+                $('jsonCollapse').addEventListener('click', function () {
+                    window.jQuery('#jsonTree').JSONView('collapse');
+                });
+            } catch (e) {
+                $('rawBody').innerHTML = `<div class="err-item"><div class="m">交互树渲染失败，已退回原文：${esc(e.message)}</div></div>` + rawTextHtml(reply);
+            }
+
+            return;
+        }
+
+        $('rawBody').innerHTML = rawTextHtml(reply);
+    }
+
+    function rawTextHtml(reply) {
+        const lines = (reply.text || '').split('\n');
         const limit = 1500;
         const shown = lines.slice(0, limit).map((l, i) => `<span class="ln">${i + 1}</span>${esc(l)}`).join('\n');
 
-        $('rawBody').innerHTML = `<pre class="code">${shown}</pre>` +
+        return `<pre class="code">${shown}</pre>` +
             (reply.truncated || lines.length > limit
                 ? `<div class="trunc-note">仅显示前 ${Math.min(lines.length, limit)} 行 / ${num(reply.size)} 字符，完整内容请直接打开文件：${esc(state.selected ? state.selected.sessionId : '')}\\${esc(reply.name)}</div>`
                 : '');

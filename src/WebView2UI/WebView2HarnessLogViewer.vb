@@ -125,11 +125,6 @@ Public Class WebView2HarnessLogViewer
         End If
 
         Call AttachHost(If(_folder, ""))
-
-        ' this page is served from a virtual domain, so a file:// navigation
-        ' can only come from dropping a file into the window
-        AddHandler WebView21.CoreWebView2.NavigationStarting, AddressOf WebView21_NavigationStarting
-
         Call WebViewLoader.NavigateToLargeString(WebView21, LoadDocument())
     End Sub
 
@@ -148,17 +143,28 @@ Public Class WebView2HarnessLogViewer
         End Try
     End Sub
 
+    ''' <summary>
+    ''' the viewer never navigates: this page is served from a virtual domain,
+    ''' so any later navigation can only come from a link inside a json value
+    ''' or from dropping a file into the window. it is hooked after the first
+    ''' navigation completed, so it can never cancel the loading of the page
+    ''' itself.
+    ''' </summary>
     Private Sub WebView21_NavigationStarting(sender As Object, e As CoreWebView2NavigationStartingEventArgs)
-        If e.Uri.StringEmpty OrElse Not e.Uri.StartsWith("file://", StringComparison.OrdinalIgnoreCase) Then
+        If e.Uri.StringEmpty Then
             Return
         End If
 
-        ' a dropped file is not a log: the viewer never navigates away
         e.Cancel = True
     End Sub
 
     Private Sub WebView21_NavigationCompleted(sender As Object, e As CoreWebView2NavigationCompletedEventArgs) Handles WebView21.NavigationCompleted
         _webViewReady = True
+
+        If WebView21.CoreWebView2 IsNot Nothing Then
+            AddHandler WebView21.CoreWebView2.NavigationStarting, AddressOf WebView21_NavigationStarting
+        End If
+
         Call SendBind()
     End Sub
 
@@ -214,8 +220,9 @@ Public Class WebView2HarnessLogViewer
 
     ''' <summary>
     ''' assemble the document the control shows: the html of the viewer with
-    ''' its style sheet and its script inlined, so one document is all the
-    ''' webview has to load.
+    ''' its style sheets and its scripts inlined, so one document is all the
+    ''' webview has to load. the jquery shim has to come before the jsonview
+    ''' plugin, which hangs its <c>JSONView</c> method onto <c>jQuery.fn</c>.
     ''' </summary>
     Private Shared Function LoadDocument() As String
         Dim html As String = ReadResource("WebView2UI.Logs.harness-log.html")
@@ -229,12 +236,20 @@ Public Class WebView2HarnessLogViewer
                    "<p>the embedded resources WebView2UI.Logs.harness-log.html / .css / .js were not found.</p></body></html>"
         End If
 
-        Dim style As String = If(css.StringEmpty, "", "<style>" & vbCrLf & css & vbCrLf & "</style>")
-        Dim code As String = If(script.StringEmpty, "", "<script>" & vbCrLf & script & vbCrLf & "</script>")
-
         Return html _
-            .Replace("<!--@css-->", style) _
-            .Replace("<!--@js-->", code)
+            .Replace("<!--@jsonview-css-->", StyleBlock(ReadResource("WebView2UI.Logs.jquery.jsonview.min.css"))) _
+            .Replace("<!--@css-->", StyleBlock(css)) _
+            .Replace("<!--@shim-js-->", ScriptBlock(ReadResource("WebView2UI.Logs.jsonview-shim.js"))) _
+            .Replace("<!--@jsonview-js-->", ScriptBlock(ReadResource("WebView2UI.Logs.jquery.jsonview.min.js"))) _
+            .Replace("<!--@js-->", ScriptBlock(script))
+    End Function
+
+    Private Shared Function StyleBlock(css As String) As String
+        Return If(css.StringEmpty, "", "<style>" & vbCrLf & css & vbCrLf & "</style>")
+    End Function
+
+    Private Shared Function ScriptBlock(script As String) As String
+        Return If(script.StringEmpty, "", "<script>" & vbCrLf & script & vbCrLf & "</script>")
     End Function
 
     Private Shared Function ReadResource(name As String) As String

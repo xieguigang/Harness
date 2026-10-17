@@ -91,6 +91,16 @@
     <EmbeddedResource Include="Logs\harness-log.js">
       <LogicalName>WebView2UI.Logs.harness-log.js</LogicalName>
     </EmbeddedResource>
+    <!-- jquery.jsonview 插件与其最小 jQuery 兼容层：原始 json 以可交互树显示 -->
+    <EmbeddedResource Include="Logs\jsonview-shim.js">
+      <LogicalName>WebView2UI.Logs.jsonview-shim.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Logs\jsonview\jquery.jsonview.min.js">
+      <LogicalName>WebView2UI.Logs.jquery.jsonview.min.js</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Logs\jsonview\jquery.jsonview.min.css">
+      <LogicalName>WebView2UI.Logs.jquery.jsonview.min.css</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <Import Project="..\..\..\galaxy\src\WebViewHelper\WebViewHelper.projitems" Label="Shared" />
