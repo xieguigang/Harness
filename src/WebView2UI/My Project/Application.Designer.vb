@@ -33,7 +33,36 @@ Namespace My
         
         <Global.System.Diagnostics.DebuggerStepThroughAttribute()>  _
         Protected Overrides Sub OnCreateMainForm()
-            Me.MainForm = Global.WebView2UI.FormLLMUI
+            Dim argv As String() = Environment.GetCommandLineArgs()
+            Dim selfTest As Boolean = False
+            Dim logsOnly As Boolean = False
+
+            For Each arg As String In argv
+                If String.Equals(arg, "--selftest", StringComparison.OrdinalIgnoreCase) Then
+                    selfTest = True
+                End If
+                If String.Equals(arg, "--logs", StringComparison.OrdinalIgnoreCase) Then
+                    logsOnly = True
+                End If
+            Next
+
+            If selfTest Then
+                ' 无头自测：不打开任何窗口，直接以退出码反馈日志解析结果
+                Dim folderArgs As New List(Of String)()
+
+                For i As Integer = 1 To argv.Length - 1
+                    If argv(i).StartsWith("-") Then
+                        Continue For
+                    End If
+                    folderArgs.Add(argv(i))
+                Next
+
+                Environment.Exit(Global.WebView2UI.Logs.LogViewerSelfTest.Run(folderArgs.ToArray()))
+            ElseIf logsOnly Then
+                Me.MainForm = Global.WebView2UI.FormLogViewer
+            Else
+                Me.MainForm = Global.WebView2UI.FormLLMUI
+            End If
         End Sub
         
         <Global.System.Diagnostics.DebuggerStepThroughAttribute()>  _
