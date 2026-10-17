@@ -52,7 +52,7 @@ Public Class FormLogViewer
         End If
 
         logViewer1.LogFolder = folder
-        logViewer1.Refresh()
+        logViewer1.Reload()
     End Sub
 
 End Class

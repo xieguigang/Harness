@@ -1,6 +1,7 @@
 Imports System.IO
 Imports System.Reflection
 Imports System.Text
+Imports System.Text.Json
 Imports Microsoft.Web.WebView2.Core
 Imports WebView2UI.Logs
 
@@ -79,7 +80,7 @@ Public Class WebView2HarnessLogViewer
     ''' ask the host to drop its cached documents and tell the page to reload,
     ''' so a log that grew while the viewer was open shows up.
     ''' </summary>
-    Public Sub Refresh()
+    Public Sub Reload()
         If _host Is Nothing Then
             Return
         End If

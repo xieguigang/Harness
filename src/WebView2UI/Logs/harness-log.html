@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Harness 日志查看器</title>
+    <!--@css-->
+</head>
+
+<body>
+    <div id="app">
+        <header id="topbar">
+            <div class="brand">
+                <span class="brand-mark">HL</span>
+                <div class="brand-text">
+                    <h1>Harness 日志查看器</h1>
+                    <p id="rootPath" class="root-path">未选择日志目录</p>
+                </div>
+            </div>
+            <div class="top-actions">
+                <span id="statusDot" class="dot dot-idle"></span>
+                <span id="statusText" class="status-text">连接中…</span>
+                <button id="btnReload" class="btn" type="button" title="重新扫描日志目录">刷新</button>
+                <button id="btnSidebar" class="btn btn-icon" type="button" title="折叠 / 展开侧栏">☰</button>
+            </div>
+        </header>
+
+        <div id="progress" class="progress"></div>
+        <div id="errorBar" class="error-bar" hidden></div>
+
+        <div id="body">
+            <aside id="sidebar">
+                <div class="side-search">
+                    <input id="sessionSearch" type="text" placeholder="搜索会话 id / 模型 / 工作区…" autocomplete="off" />
+                </div>
+                <div id="sessionList" class="session-list"></div>
+            </aside>
+
+            <main id="main">
+                <nav id="tabs" class="tabs"></nav>
+                <div id="filterBar" class="filter-bar"></div>
+                <div id="pager" class="pager"></div>
+                <section id="content" class="content"></section>
+            </main>
+        </div>
+
+        <div id="drawer" class="drawer" hidden></div>
+        <div id="modal" class="modal" hidden></div>
+    </div>
+
+    <!--@js-->
+</body>
+
+</html>

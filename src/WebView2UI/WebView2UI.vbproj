@@ -77,6 +77,20 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- the web page of the harness log viewer: html, css and js are embedded
+         separately and inlined into one document when the control loads it -->
+    <EmbeddedResource Include="Logs\harness-log.html">
+      <LogicalName>WebView2UI.Logs.harness-log.html</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Logs\harness-log.css">
+      <LogicalName>WebView2UI.Logs.harness-log.css</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Logs\harness-log.js">
+      <LogicalName>WebView2UI.Logs.harness-log.js</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
   <Import Project="..\..\..\galaxy\src\WebViewHelper\WebViewHelper.projitems" Label="Shared" />
 
 </Project>
