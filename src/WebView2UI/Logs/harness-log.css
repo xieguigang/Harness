@@ -46,6 +46,12 @@
     padding: 0;
 }
 
+/* 类选择器上的 display 会盖掉浏览器默认的 [hidden]{display:none}，
+   模态框与抽屉因此必须显式声明，否则它们会一直浮在界面上挡住操作 */
+[hidden] {
+    display: none !important;
+}
+
 html,
 body {
     height: 100%;
