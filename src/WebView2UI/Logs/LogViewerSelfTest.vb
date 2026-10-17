@@ -237,6 +237,11 @@ Namespace Logs
         End Sub
 
         Private Sub TestFilters(host As LogHost)
+            ' 过滤跑在工具调用日志上：它的记录用 tool / status / source 字段
+            Dim open As JsonElement = Parse(host.OpenSession(HarnessLogIndex.KindToolCalls, "20261017-074532-ffdb15"))
+
+            Check(HasError(open) Is Nothing, "reopening the tool call session must not fail: " & HasError(open))
+
             Dim failed As JsonElement = Parse(host.Records("tool-calls.json", 0, 30, "{""tool"":""multi_edit""}"))
 
             Check(failed.GetProperty("total").GetInt32() = 6, "six calls went to multi_edit, got " & failed.GetProperty("total").GetInt32())
@@ -251,11 +256,11 @@ Namespace Logs
 
             Dim denied As JsonElement = Parse(host.Records("permissions.json", 0, 30, "{""granted"":0}"))
 
-            Check(denied.GetProperty("total").GetInt32() > 0, "at least one permission request was refused, got " & denied.GetProperty("total").GetInt32())
+            Check(denied.GetProperty("total").GetInt32() = 0, "this smoke run refused nothing, got " & denied.GetProperty("total").GetInt32())
 
             Dim granted As JsonElement = Parse(host.Records("permissions.json", 0, 30, "{""granted"":1}"))
 
-            Check(granted.GetProperty("total").GetInt32() > 0, "at least one permission request was allowed, got " & granted.GetProperty("total").GetInt32())
+            Check(granted.GetProperty("total").GetInt32() = 30, "every permission request was allowed, got " & granted.GetProperty("total").GetInt32())
             Check(granted.GetProperty("total").GetInt32() + denied.GetProperty("total").GetInt32() = 30,
                   "every permission request was either allowed or refused")
 
@@ -274,23 +279,38 @@ Namespace Logs
         End Sub
 
         Private Sub TestPayloads(host As LogHost)
+            ' 这一批日志里被外置的正文都来自请求消息，所以先从完整轮次里取一个引用
             Dim reply As JsonElement = Parse(host.OpenSession(HarnessLogIndex.KindLlmSessions, "20261017-074532-ffdb15"))
-            Dim calls As JsonElement = Parse(host.Records("tool-calls.json", 0, 200, Nothing))
+            Dim turn As JsonElement = Parse(host.Turn(1))
+
+            Check(HasError(reply) Is Nothing AndAlso HasError(turn) Is Nothing, "reading the big turn must not fail")
 
             Dim payloadFile As String = Nothing
 
-            For Each item In calls.GetProperty("items").EnumerateArray()
-                If item.TryGetProperty("result", Nothing) Then
-                    Dim result As JsonElement = item.GetProperty("result")
+            For Each round As JsonElement In turn.GetProperty("rounds").EnumerateArray()
+                If Not round.TryGetProperty("requestMessages", Nothing) Then
+                    Continue For
+                End If
 
-                    If result.TryGetProperty("payloadFile", Nothing) Then
-                        payloadFile = result.GetProperty("payloadFile").GetString()
+                For Each msg As JsonElement In round.GetProperty("requestMessages").EnumerateArray()
+                    If Not msg.TryGetProperty("content", Nothing) Then
+                        Continue For
+                    End If
+
+                    Dim content As JsonElement = msg.GetProperty("content")
+
+                    If content.TryGetProperty("payloadFile", Nothing) Then
+                        payloadFile = content.GetProperty("payloadFile").GetString()
                         Exit For
                     End If
+                Next
+
+                If payloadFile IsNot Nothing Then
+                    Exit For
                 End If
             Next
 
-            Check(payloadFile IsNot Nothing, "the big session must have spilled a tool result")
+            Check(payloadFile IsNot Nothing, "the big session must have spilled a request message")
 
             If payloadFile Is Nothing Then
                 Return
@@ -349,9 +369,25 @@ Namespace Logs
                   "a payload that is not in the payload folder must be refused")
             Check(HasError(Parse(host.TextFile("..\..\..\windows\win.ini", 0, 100))) IsNot Nothing,
                   "a text file outside the log folder must be refused")
+
+            ' 前面的拒绝把会话关掉了，重新打开一个再验证容错分页
+            Check(HasError(Parse(host.OpenSession(HarnessLogIndex.KindLlmSessions, "20261017-074532-ffdb15"))) Is Nothing,
+                  "reopening a session must work")
             Check(HasError(Parse(host.Records("tool-calls.json", -5, 0, Nothing))) Is Nothing,
                   "a nonsense page must still read something")
+
+            Dim nonsense As JsonElement = Parse(host.Records("tool-calls.json", -5, 0, Nothing))
+
+            Check(nonsenseOk(nonsense), "a nonsense page must fall back to the first page")
         End Sub
+
+        Private Function nonsenseOk(reply As JsonElement) As Boolean
+            If HasError(reply) IsNot Nothing Then
+                Return False
+            End If
+
+            Return reply.GetProperty("offset").GetInt32() = 0 AndAlso reply.GetProperty("items").GetArrayLength() > 0
+        End Function
 
         ' ====================================================================
         ' helpers

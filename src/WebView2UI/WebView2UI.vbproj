@@ -1,7 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Library</OutputType>
+    <!-- WinExe：本工程带 MySubMain 演示入口（logs 模式打开日志查看器，selftest 模式跑无头自测），
+         没有任何其它工程引用它，因此直接作为可双击运行的演示程序 -->
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <StartupObject>WebView2UI.My.MyApplication</StartupObject>
     <UseWindowsForms>true</UseWindowsForms>
